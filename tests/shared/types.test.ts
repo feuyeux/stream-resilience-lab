@@ -1,8 +1,32 @@
 import { describe, expect, it } from "vitest";
-import type { RunReport } from "../../src/shared/types.js";
+import type { RunOptions, RunReport, ScenarioName, StreamObservation } from "../../src/shared/types.js";
 
 describe("shared types", () => {
   it("allows a complete run report shape", () => {
+    void ("normal" satisfies ScenarioName);
+    void ({
+      protocol: "openai-chat",
+      query: "test query",
+      mode: "stream",
+      scenario: "normal",
+      model: "gpt-4o",
+      baseUrl: "http://localhost",
+      maxAttempts: 1,
+      idleTimeoutMs: 1000,
+      wallTimeoutMs: 2000,
+      reportDir: ".",
+      json: true
+    } satisfies RunOptions);
+    void ({
+      events: [],
+      text: "",
+      chunkCount: 0,
+      receivedChars: 0,
+      partial: false,
+      toolJsonStarted: false,
+      toolJsonComplete: false
+    } satisfies StreamObservation);
+
     const report: RunReport = {
       request_id: "mock_1",
       protocol: "openai-chat",
