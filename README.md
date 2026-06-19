@@ -9,30 +9,7 @@ The project has two intentionally named sides:
 
 ## How It Works
 
-```mermaid
-flowchart LR
-    User[User query + scenario] --> Runner[resilience-runner CLI]
-
-    subgraph Client["Client side: resilience-runner"]
-        Runner --> SDK{Official SDK}
-        SDK -->|OpenAI SDK| OpenAIRoutes[OpenAI-compatible requests]
-        SDK -->|Anthropic SDK| AnthropicRoutes[Anthropic-compatible requests]
-        Runner --> Policy[Resilience policy]
-        Policy --> Report[JSON / Markdown reports]
-    end
-
-    subgraph Server["Server side: fault-provider"]
-        Routes[Protocol endpoints] --> Engine[Scenario engine]
-        Engine --> Adapters[Protocol adapters]
-        Adapters --> Stream[SSE / JSON response]
-    end
-
-    OpenAIRoutes -->|/v1/chat/completions or /v1/responses| Routes
-    AnthropicRoutes -->|/v1/messages| Routes
-    Stream --> SDK
-    SDK -->|deltas, SDK errors, aborts| Policy
-    Policy --> Console[terminal result]
-```
+![Stream Resilience Lab technical principles poster](docs/assets/stream-resilience-lab-principles.svg)
 
 `fault-provider` never calls a real model. It exposes provider-compatible endpoints, chooses a scenario such as `midstream-close` or `half-tool-json`, then emits valid JSON, valid SSE, malformed SSE, delayed streams, rate limits, or socket closes.
 
