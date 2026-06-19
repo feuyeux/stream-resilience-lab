@@ -146,4 +146,53 @@ describe("resilience policy", () => {
     expect(report.result.status).toBe("safe_failure");
     expect(report.mitigation.actions).toContain("blocked_unobservable_tool_partial");
   });
+
+  it("treats malformed SSE stream errors as safe failures", async () => {
+    const report = await runWithResilience(
+      {
+        protocol: "openai-chat",
+        query: "hello",
+        mode: "stream",
+        scenario: "half-sse-frame",
+        model: "mock-model",
+        baseUrl: "http://mock/v1",
+        maxAttempts: 2,
+        idleTimeoutMs: 500,
+        wallTimeoutMs: 2000,
+        reportDir: "reports",
+        json: false
+      },
+      async () => {
+        throw new Error("response destroyed before completion");
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(report.problem.kind).toBe("malformed_stream");
+    expect(report.result.status).toBe("safe_failure");
+    expect(report.mitigation.retry_attempts).toBe(0);
+  });
+
+  it("treats empty silent streams as content idle aborts", async () => {
+    const report = await runWithResilience(
+      {
+        protocol: "openai-chat",
+        query: "hello",
+        mode: "stream",
+        scenario: "silent-hang",
+        model: "mock-model",
+        baseUrl: "http://mock/v1",
+        maxAttempts: 2,
+        idleTimeoutMs: 500,
+        wallTimeoutMs: 2000,
+        reportDir: "reports",
+        json: false
+      },
+      async () => ({ text: "", events: ["chat.completion.chunk"] }),
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(report.problem.kind).toBe("idle_timeout");
+    expect(report.result.status).toBe("aborted_content_idle_timeout");
+  });
 });

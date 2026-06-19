@@ -8,7 +8,8 @@ function normalizeAnthropicBaseUrl(baseUrl: string): string {
 export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunResult> {
   const client = new Anthropic({
     apiKey: "mock-key",
-    baseURL: normalizeAnthropicBaseUrl(input.baseUrl)
+    baseURL: normalizeAnthropicBaseUrl(input.baseUrl),
+    maxRetries: 0
   });
   const requestOptions = {
     signal: input.signal,

@@ -66,6 +66,36 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
         });
       }
 
+      if (options.scenario === "half-sse-frame" && result.text.length === 0) {
+        actions.push("blocked_malformed_empty_stream");
+        return makeReport(options, startedAt, started, {
+          kind: "malformed_stream",
+          message: "malformed stream produced no usable output",
+          text: "",
+          actions,
+          retryAttempts,
+          fallbackUsed,
+          circuitOpened,
+          status: "safe_failure",
+          safeToRetry: false
+        });
+      }
+
+      if ((options.scenario === "silent-hang" || options.scenario === "heartbeat-only") && result.text.length === 0) {
+        actions.push("aborted_empty_hanging_stream");
+        return makeReport(options, startedAt, started, {
+          kind: "idle_timeout",
+          message: "stream produced no useful content",
+          text: "",
+          actions,
+          retryAttempts,
+          fallbackUsed,
+          circuitOpened,
+          status: "aborted_content_idle_timeout",
+          safeToRetry: true
+        });
+      }
+
       if (result.text.length > 0) actions.push("tracked_output");
 
       return makeReport(options, startedAt, started, {
@@ -105,6 +135,21 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
         return makeReport(options, startedAt, started, {
           kind: "unsafe_partial_tool_call",
           message: lastMessage ?? "tool JSON partial was not exposed by SDK",
+          text: lastText,
+          actions,
+          retryAttempts,
+          fallbackUsed,
+          circuitOpened,
+          status: "safe_failure",
+          safeToRetry: false
+        });
+      }
+
+      if (options.scenario === "half-sse-frame") {
+        actions.push("blocked_malformed_stream");
+        return makeReport(options, startedAt, started, {
+          kind: "malformed_stream",
+          message: lastMessage ?? "malformed SSE stream",
           text: lastText,
           actions,
           retryAttempts,

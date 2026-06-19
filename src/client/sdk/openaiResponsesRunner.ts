@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import type { SdkRunInput, SdkRunResult } from "./types.js";
 
 export async function runOpenAIResponses(input: SdkRunInput): Promise<SdkRunResult> {
-  const client = new OpenAI({ apiKey: "mock-key", baseURL: input.baseUrl });
+  const client = new OpenAI({ apiKey: "mock-key", baseURL: input.baseUrl, maxRetries: 0 });
 
   if (!input.stream) {
     const response = await client.responses.create(

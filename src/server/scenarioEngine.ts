@@ -53,6 +53,12 @@ function textChunks(text: string): string[] {
   return text.match(/.{1,8}/g) ?? [text];
 }
 
+function waitForClientClose(reply: FastifyReply): Promise<void> {
+  return new Promise((resolve) => {
+    reply.raw.once("close", resolve);
+  });
+}
+
 function requestBody(request: FastifyRequest): BodyWithMockFields | undefined {
   return request.body as BodyWithMockFields | undefined;
 }
@@ -146,6 +152,7 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
   }
 
   if (scenario === "silent-hang") {
+    await waitForClientClose(reply);
     return;
   }
 
@@ -158,12 +165,13 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
       }
       await sleep(200);
     }
+    await waitForClientClose(reply);
     return;
   }
 
   if (scenario === "half-sse-frame") {
     writeRaw(reply, "data: {\"broken\":");
-    endSse(reply);
+    destroySse(reply);
     return;
   }
 
