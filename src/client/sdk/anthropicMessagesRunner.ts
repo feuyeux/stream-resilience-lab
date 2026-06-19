@@ -10,7 +10,10 @@ export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunRe
     apiKey: "mock-key",
     baseURL: normalizeAnthropicBaseUrl(input.baseUrl)
   });
-  const metadata = { mock_scenario: input.scenario } as any;
+  const requestOptions = {
+    signal: input.signal,
+    headers: { "x-mock-scenario": input.scenario }
+  };
 
   if (!input.stream) {
     const response = await client.messages.create(
@@ -18,10 +21,9 @@ export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunRe
         model: input.model,
         max_tokens: 256,
         messages: [{ role: "user", content: input.query }],
-        stream: false,
-        metadata
+        stream: false
       },
-      { signal: input.signal }
+      requestOptions
     );
 
     const text = response.content
@@ -36,14 +38,13 @@ export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunRe
   }
 
   const stream = await client.messages.create(
-    {
-      model: input.model,
-      max_tokens: 256,
-      messages: [{ role: "user", content: input.query }],
-      stream: true,
-      metadata
-    },
-    { signal: input.signal }
+      {
+        model: input.model,
+        max_tokens: 256,
+        messages: [{ role: "user", content: input.query }],
+        stream: true
+      },
+    requestOptions
   );
 
   let text = "";
