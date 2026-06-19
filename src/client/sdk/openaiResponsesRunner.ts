@@ -35,17 +35,32 @@ export async function runOpenAIResponses(input: SdkRunInput): Promise<SdkRunResu
   let toolJson = "";
   const events: string[] = [];
 
-  for await (const event of stream) {
-    events.push(event.type);
+  try {
+    for await (const event of stream) {
+      events.push(event.type);
 
-    if (event.type === "response.output_text.delta") {
-      text += event.delta;
-    }
+      if (event.type === "response.output_text.delta") {
+        text += event.delta;
+      }
 
-    if (event.type === "response.function_call_arguments.delta") {
-      toolJson += event.delta;
+      if (event.type === "response.function_call_arguments.delta") {
+        toolJson += event.delta;
+      }
     }
+  } catch (error) {
+    attachPartialState(error, text, events, toolJson);
+    throw error;
   }
 
   return { text, events, toolJson: toolJson || undefined };
+}
+
+function attachPartialState(error: unknown, text: string, events: string[], toolJson: string): void {
+  if (typeof error === "object" && error !== null) {
+    Object.assign(error, {
+      partialText: text,
+      partialEvents: events,
+      partialToolJson: toolJson || undefined
+    });
+  }
 }

@@ -32,6 +32,7 @@ describe("shared types", () => {
       protocol: "openai-chat",
       mode: "stream",
       scenario: "normal",
+      output_text: "hello",
       problem: {
         kind: "none",
         after_partial_output: false,

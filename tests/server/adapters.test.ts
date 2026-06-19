@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { makeAnthropicMessage, makeAnthropicTextDelta } from "../../src/server/adapters/anthropicMessages.js";
+import { makeAnthropicMessage, makeAnthropicTextDelta, makeAnthropicToolUseBlockStart } from "../../src/server/adapters/anthropicMessages.js";
 import { makeOpenAIChatCompletion, makeOpenAIChatDelta } from "../../src/server/adapters/openaiChat.js";
 import { makeOpenAIResponse, makeOpenAIResponseTextDelta } from "../../src/server/adapters/openaiResponses.js";
 
@@ -38,5 +38,12 @@ describe("protocol adapters", () => {
     const event = makeAnthropicTextDelta("he");
     expect(event.event).toBe("content_block_delta");
     expect(event.data.delta.text).toBe("he");
+  });
+
+  it("builds an Anthropic tool-use block start event", () => {
+    const event = makeAnthropicToolUseBlockStart();
+    const contentBlock = event.data.content_block as { type: string };
+    expect(event.event).toBe("content_block_start");
+    expect(contentBlock.type).toBe("tool_use");
   });
 });

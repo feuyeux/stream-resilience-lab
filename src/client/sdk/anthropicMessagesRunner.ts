@@ -51,17 +51,32 @@ export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunRe
   let toolJson = "";
   const events: string[] = [];
 
-  for await (const event of stream) {
-    events.push(event.type);
+  try {
+    for await (const event of stream) {
+      events.push(event.type);
 
-    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-      text += event.delta.text;
-    }
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        text += event.delta.text;
+      }
 
-    if (event.type === "content_block_delta" && event.delta.type === "input_json_delta") {
-      toolJson += event.delta.partial_json;
+      if (event.type === "content_block_delta" && event.delta.type === "input_json_delta") {
+        toolJson += event.delta.partial_json;
+      }
     }
+  } catch (error) {
+    attachPartialState(error, text, events, toolJson);
+    throw error;
   }
 
   return { text, events, toolJson: toolJson || undefined };
+}
+
+function attachPartialState(error: unknown, text: string, events: string[], toolJson: string): void {
+  if (typeof error === "object" && error !== null) {
+    Object.assign(error, {
+      partialText: text,
+      partialEvents: events,
+      partialToolJson: toolJson || undefined
+    });
+  }
 }

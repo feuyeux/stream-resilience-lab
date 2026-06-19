@@ -21,6 +21,7 @@ function report(): RunReport {
     protocol: "anthropic",
     mode: "stream",
     scenario: "midstream-close",
+    output_text: "partial",
     problem: { kind: "stream_interrupted", after_partial_output: true, received_chars: 12 },
     mitigation: { actions: ["tracked_partial_output"], retry_attempts: 0, fallback_used: false, circuit_opened: false },
     result: { status: "partial_returned", safe_to_retry_automatically: false },

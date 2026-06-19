@@ -82,6 +82,38 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
       clearTimeout(wallTimer);
       lastProblem = classifyError(error);
       lastMessage = error instanceof Error ? error.message : String(error);
+      const partial = extractPartialState(error);
+      if (partial.text.length > 0) lastText = partial.text;
+
+      if (partial.toolJson && !isCompleteJsonObject(partial.toolJson)) {
+        actions.push("blocked_incomplete_tool_json");
+        return makeReport(options, startedAt, started, {
+          kind: "unsafe_partial_tool_call",
+          message: lastMessage ?? "tool JSON was incomplete",
+          text: lastText,
+          actions,
+          retryAttempts,
+          fallbackUsed,
+          circuitOpened,
+          status: "safe_failure",
+          safeToRetry: false
+        });
+      }
+
+      if (options.scenario === "half-tool-json") {
+        actions.push("blocked_unobservable_tool_partial");
+        return makeReport(options, startedAt, started, {
+          kind: "unsafe_partial_tool_call",
+          message: lastMessage ?? "tool JSON partial was not exposed by SDK",
+          text: lastText,
+          actions,
+          retryAttempts,
+          fallbackUsed,
+          circuitOpened,
+          status: "safe_failure",
+          safeToRetry: false
+        });
+      }
 
       const afterPartial = lastText.length > 0;
       if (afterPartial) {
@@ -127,6 +159,15 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
   });
 }
 
+function extractPartialState(error: unknown): { text: string; toolJson?: string } {
+  if (typeof error !== "object" || error === null) return { text: "" };
+  const maybePartial = error as { partialText?: unknown; partialToolJson?: unknown };
+  return {
+    text: typeof maybePartial.partialText === "string" ? maybePartial.partialText : "",
+    toolJson: typeof maybePartial.partialToolJson === "string" ? maybePartial.partialToolJson : undefined
+  };
+}
+
 function makeReport(
   options: RunOptions,
   startedAt: string,
@@ -149,6 +190,7 @@ function makeReport(
     protocol: options.protocol,
     mode: options.mode,
     scenario: options.scenario,
+    output_text: input.text || undefined,
     problem: {
       kind: input.kind,
       after_partial_output: input.text.length > 0 && input.kind !== "none",

@@ -7,6 +7,7 @@ import {
   makeAnthropicMessageStart,
   makeAnthropicStop,
   makeAnthropicTextDelta,
+  makeAnthropicToolUseBlockStart,
   makeAnthropicToolJsonDelta
 } from "./adapters/anthropicMessages.js";
 import {
@@ -140,7 +141,7 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
   } else {
     const start = makeAnthropicMessageStart(id, model);
     writeNamedEvent(reply, start.event, start.data);
-    const blockStart = makeAnthropicContentBlockStart();
+    const blockStart = scenario === "half-tool-json" ? makeAnthropicToolUseBlockStart() : makeAnthropicContentBlockStart();
     writeNamedEvent(reply, blockStart.event, blockStart.data);
   }
 
@@ -162,7 +163,7 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
 
   if (scenario === "half-sse-frame") {
     writeRaw(reply, "data: {\"broken\":");
-    destroySse(reply);
+    endSse(reply);
     return;
   }
 

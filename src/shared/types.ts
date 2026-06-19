@@ -78,6 +78,7 @@ export interface RunReport {
   protocol: Protocol;
   mode: Mode;
   scenario: ScenarioName;
+  output_text?: string;
   problem: {
     kind: ProblemKind;
     after_partial_output: boolean;

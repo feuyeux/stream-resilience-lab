@@ -35,18 +35,33 @@ export async function runOpenAIChat(input: SdkRunInput): Promise<SdkRunResult> {
   let toolJson = "";
   const events: string[] = [];
 
-  for await (const chunk of stream) {
-    events.push(chunk.object);
-    const delta = chunk.choices[0]?.delta;
-    if (delta?.content) {
-      text += delta.content;
-    }
+  try {
+    for await (const chunk of stream) {
+      events.push(chunk.object);
+      const delta = chunk.choices[0]?.delta;
+      if (delta?.content) {
+        text += delta.content;
+      }
 
-    const toolArgs = delta?.tool_calls?.[0]?.function?.arguments;
-    if (toolArgs) {
-      toolJson += toolArgs;
+      const toolArgs = delta?.tool_calls?.[0]?.function?.arguments;
+      if (toolArgs) {
+        toolJson += toolArgs;
+      }
     }
+  } catch (error) {
+    attachPartialState(error, text, events, toolJson);
+    throw error;
   }
 
   return { text, events, toolJson: toolJson || undefined };
+}
+
+function attachPartialState(error: unknown, text: string, events: string[], toolJson: string): void {
+  if (typeof error === "object" && error !== null) {
+    Object.assign(error, {
+      partialText: text,
+      partialEvents: events,
+      partialToolJson: toolJson || undefined
+    });
+  }
 }

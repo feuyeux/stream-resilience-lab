@@ -66,6 +66,22 @@ export function makeAnthropicContentBlockStart(): AnthropicNamedSseEvent {
   };
 }
 
+export function makeAnthropicToolUseBlockStart(): AnthropicNamedSseEvent {
+  return {
+    event: "content_block_start",
+    data: {
+      type: "content_block_start",
+      index: 0,
+      content_block: {
+        type: "tool_use",
+        id: "toolu_mock",
+        name: "mock_tool",
+        input: {}
+      }
+    }
+  };
+}
+
 export function makeAnthropicTextDelta(text: string): AnthropicTextDeltaEvent {
   return {
     event: "content_block_delta",
