@@ -1,4 +1,4 @@
-# SDK Mock Streaming Provider Implementation Plan
+# Stream Resilience Lab Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -53,7 +53,7 @@ Create `package.json`:
 
 ```json
 {
-  "name": "sdk-mock-streaming-provider",
+  "name": "stream-resilience-lab",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -1352,7 +1352,7 @@ tsc exits with code 0
 Run one terminal:
 
 ```bash
-npm run server
+npm run fault-provider
 ```
 
 Run another terminal:
@@ -2265,9 +2265,9 @@ program.command("smoke").option("--base-url <url>", "provider base URL", "http:/
 
 program.command("help-text").action(() => {
   console.log("Mock server started. Try:");
-  console.log('npm run client -- openai-chat "hello" --stream --scenario normal');
-  console.log('npm run client -- anthropic "hello" --stream --scenario midstream-close');
-  console.log("npm run smoke");
+  console.log('npm run resilience-runner -- openai-chat "hello" --stream --scenario normal');
+  console.log('npm run resilience-runner -- anthropic "hello" --stream --scenario midstream-close');
+  console.log("npm run resilience:smoke");
 });
 
 program.parseAsync();
@@ -2294,16 +2294,16 @@ tsc exits with code 0
 Run one terminal:
 
 ```bash
-npm run server
+npm run fault-provider
 ```
 
 Run another terminal:
 
 ```bash
-npm run scenarios
-npm run client -- openai-chat "hello" --stream --scenario normal
-npm run client -- anthropic "hello" --stream --scenario midstream-close
-npm run smoke
+npm run resilience:scenarios
+npm run resilience-runner -- openai-chat "hello" --stream --scenario normal
+npm run resilience-runner -- anthropic "hello" --stream --scenario midstream-close
+npm run resilience:smoke
 ```
 
 Expected:
@@ -2333,14 +2333,14 @@ If `reports/.gitkeep` does not exist, create it with an empty file before adding
 
 **Files:**
 - Create: `README.md`
-- Modify: `docs/superpowers/specs/2026-06-19-sdk-mock-streaming-provider-design.md` only if implementation intentionally differs from the approved design.
+- Modify: `docs/superpowers/specs/2026-06-19-stream-resilience-lab-design.md` only if implementation intentionally differs from the approved design.
 
 - [ ] **Step 1: Create README**
 
 Create `README.md`:
 
 ```md
-# SDK Mock Streaming Provider
+# Stream Resilience Lab
 
 Lightweight TypeScript harness for testing client resilience against mocked LLM streaming failures.
 
@@ -2353,7 +2353,7 @@ npm install
 ## Start Mock Server
 
 ```bash
-npm run server
+npm run fault-provider
 ```
 
 The server listens at:
@@ -2365,21 +2365,21 @@ http://127.0.0.1:3000/v1
 ## Run One Scenario
 
 ```bash
-npm run client -- openai-chat "hello" --stream --scenario midstream-close
-npm run client -- openai-responses "hello" --stream --scenario rate-limit-retry-after
-npm run client -- anthropic "hello" --stream --scenario half-tool-json
+npm run resilience-runner -- openai-chat "hello" --stream --scenario midstream-close
+npm run resilience-runner -- openai-responses "hello" --stream --scenario rate-limit-retry-after
+npm run resilience-runner -- anthropic "hello" --stream --scenario half-tool-json
 ```
 
 ## List Scenarios
 
 ```bash
-npm run scenarios
+npm run resilience:scenarios
 ```
 
 ## Run Smoke Matrix
 
 ```bash
-npm run smoke
+npm run resilience:smoke
 ```
 
 Reports are written to `reports/`.
@@ -2422,13 +2422,13 @@ tsc exits with code 0
 Run one terminal:
 
 ```bash
-npm run server
+npm run fault-provider
 ```
 
 Run another terminal:
 
 ```bash
-npm run smoke
+npm run resilience:smoke
 ```
 
 Expected:
@@ -2461,7 +2461,7 @@ JSON report files and one smoke Markdown summary are present
 Run:
 
 ```bash
-git add README.md docs/superpowers/specs/2026-06-19-sdk-mock-streaming-provider-design.md
+git add README.md docs/superpowers/specs/2026-06-19-stream-resilience-lab-design.md
 git commit -m "docs: document streaming resilience harness"
 ```
 

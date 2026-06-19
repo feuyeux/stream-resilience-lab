@@ -161,10 +161,10 @@ export function buildProgram(): Command {
     });
 
   program.command("help-text").action(() => {
-    console.log("Mock server started. Try:");
-    console.log('npm run client -- openai-chat "hello" --stream --scenario normal');
-    console.log('npm run client -- anthropic "hello" --stream --scenario midstream-close');
-    console.log("npm run smoke");
+    console.log("fault-provider started. Try:");
+    console.log('npm run resilience-runner -- openai-chat "hello" normal 3000');
+    console.log('npm run resilience-runner -- anthropic "hello" midstream-close 3000');
+    console.log("npm run resilience:smoke");
   });
 
   return program;

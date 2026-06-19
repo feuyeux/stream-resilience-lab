@@ -6,4 +6,4 @@ const app = buildServer();
 
 await app.listen({ port, host });
 
-console.log(`Mock streaming provider listening at http://${host}:${port}/v1`);
+console.log(`fault-provider listening at http://${host}:${port}/v1`);

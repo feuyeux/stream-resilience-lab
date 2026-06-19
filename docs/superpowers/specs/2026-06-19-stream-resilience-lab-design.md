@@ -1,4 +1,4 @@
-# SDK Mock Streaming Provider Resilience Harness Design
+# Stream Resilience Lab Resilience Harness Design
 
 Date: 2026-06-19
 
@@ -343,27 +343,27 @@ The client is a CLI built in TypeScript.
 Single run:
 
 ```bash
-npm run client -- openai-chat "hello" --stream --scenario midstream-close
-npm run client -- openai-responses "hello" --stream --scenario rate-limit-retry-after
-npm run client -- anthropic "hello" --stream --scenario half-tool-json
+npm run resilience-runner -- openai-chat "hello" --stream --scenario midstream-close
+npm run resilience-runner -- openai-responses "hello" --stream --scenario rate-limit-retry-after
+npm run resilience-runner -- anthropic "hello" --stream --scenario half-tool-json
 ```
 
 List scenarios:
 
 ```bash
-npm run scenarios
+npm run resilience:scenarios
 ```
 
 Run smoke matrix:
 
 ```bash
-npm run smoke
+npm run resilience:smoke
 ```
 
 Start server:
 
 ```bash
-npm run server
+npm run fault-provider
 ```
 
 Development convenience:
@@ -600,7 +600,7 @@ Smoke runs also write a summary Markdown file.
 
 ## Smoke Matrix
 
-`npm run smoke` runs a small deterministic matrix:
+`npm run resilience:smoke` runs a small deterministic matrix:
 
 ```text
 openai-chat       normal
@@ -668,5 +668,5 @@ Integration tests:
 - Language: TypeScript/Node.js.
 - Client transport: official provider SDKs, not raw fetch.
 - Primary purpose: verify client resilience under streaming failures.
-- Verification UX: simple CLI commands and `npm run smoke`.
+- Verification UX: simple CLI commands and `npm run resilience:smoke`.
 - First version scope: no full agent and no real tool execution.
