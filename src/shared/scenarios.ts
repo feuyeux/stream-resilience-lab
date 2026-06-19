@@ -83,7 +83,10 @@ export const scenarios: ScenarioDefinition[] = [
 ];
 
 export function listScenarios(): ScenarioDefinition[] {
-  return scenarios;
+  return scenarios.map((scenario) => ({
+    ...scenario,
+    protocols: [...scenario.protocols]
+  }));
 }
 
 export function resolveScenario(value: unknown): ScenarioDefinition {

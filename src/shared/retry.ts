@@ -6,18 +6,25 @@ export interface BackoffOptions {
   random?: () => number;
 }
 
+function parseNonNegativeInteger(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
 export function parseRetryAfterMs(headers: Headers): number | null {
   const retryAfterMs = headers.get("retry-after-ms");
   if (retryAfterMs) {
-    const parsed = Number.parseInt(retryAfterMs, 10);
-    return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+    const parsed = parseNonNegativeInteger(retryAfterMs);
+    if (parsed !== null) return parsed;
   }
 
   const retryAfter = headers.get("retry-after");
   if (!retryAfter) return null;
 
-  const seconds = Number.parseInt(retryAfter, 10);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const seconds = parseNonNegativeInteger(retryAfter);
+  if (seconds !== null) return seconds * 1000;
+  if (/^\d/.test(retryAfter)) return null;
 
   const dateMs = Date.parse(retryAfter);
   if (Number.isFinite(dateMs)) return Math.max(0, dateMs - Date.now());
@@ -28,10 +35,14 @@ export function parseRetryAfterMs(headers: Headers): number | null {
 export function computeBackoffMs(options: BackoffOptions): number {
   const random = options.random ?? Math.random;
   const attempt = Math.max(1, options.attempt);
-  const exponential = options.initialDelayMs * 2 ** (attempt - 1);
-  const base = Math.min(exponential, options.maxBackoffMs);
-  const min = 1 - options.jitterRatio;
-  const max = 1 + options.jitterRatio;
-  const multiplier = min + random() * (max - min);
-  return Math.round(base * multiplier);
+  const initialDelayMs = Math.max(0, options.initialDelayMs);
+  const maxBackoffMs = Math.max(0, options.maxBackoffMs);
+  const jitterRatio = Math.max(0, options.jitterRatio);
+  const randomValue = Math.min(1, Math.max(0, random()));
+  const exponential = initialDelayMs * 2 ** (attempt - 1);
+  const base = Math.min(exponential, maxBackoffMs);
+  const min = 1 - jitterRatio;
+  const max = 1 + jitterRatio;
+  const multiplier = min + randomValue * (max - min);
+  return Math.max(0, Math.round(base * multiplier));
 }

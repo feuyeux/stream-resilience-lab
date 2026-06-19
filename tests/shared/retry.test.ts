@@ -16,6 +16,29 @@ describe("retry utilities", () => {
     expect(parseRetryAfterMs(headers)).toBe(3000);
   });
 
+  it("falls back to retry-after when retry-after-ms is malformed", () => {
+    const headers = new Headers({
+      "retry-after-ms": "garbage",
+      "retry-after": "3"
+    });
+
+    expect(parseRetryAfterMs(headers)).toBe(3000);
+  });
+
+  it("rejects malformed numeric retry-after values", () => {
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "1foo" }))).toBeNull();
+    expect(parseRetryAfterMs(new Headers({ "retry-after": "1.5" }))).toBeNull();
+    expect(parseRetryAfterMs(new Headers({ "retry-after-ms": "500ms" }))).toBeNull();
+  });
+
+  it("parses retry-after HTTP dates", () => {
+    const future = new Date(Date.now() + 5_000).toUTCString();
+    const delay = parseRetryAfterMs(new Headers({ "retry-after": future }));
+
+    expect(delay).not.toBeNull();
+    expect(delay).toBeGreaterThanOrEqual(0);
+  });
+
   it("returns null for missing retry headers", () => {
     expect(parseRetryAfterMs(new Headers())).toBeNull();
   });

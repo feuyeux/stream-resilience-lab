@@ -29,4 +29,19 @@ describe("scenario catalog", () => {
     expect(resolveScenario("half-sse-frame").streamOnly).toBe(true);
     expect(resolveScenario("silent-hang").streamOnly).toBe(true);
   });
+
+  it("does not expose mutable global scenario state", () => {
+    const listed = listScenarios();
+    listed[0]!.name = "flood";
+    listed[0]!.protocols.push("anthropic");
+
+    expect(resolveScenario("normal").name).toBe("normal");
+    expect(listScenarios()[0]).toEqual({
+      name: "normal",
+      protocols: ["openai-chat", "openai-responses", "anthropic"],
+      streamOnly: false,
+      description: "valid response or valid stream",
+      expectedProblem: "none"
+    });
+  });
 });
