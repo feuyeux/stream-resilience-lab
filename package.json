@@ -1,0 +1,30 @@
+{
+  "name": "sdk-mock-streaming-provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "server": "tsx src/server/index.ts",
+    "client": "tsx src/client/cli.ts run",
+    "scenarios": "tsx src/client/cli.ts scenarios",
+    "smoke": "tsx src/client/cli.ts smoke",
+    "dev": "concurrently -n server \"npm:server\" \"tsx src/client/cli.ts help-text\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.65.0",
+    "commander": "^14.0.2",
+    "concurrently": "^9.2.1",
+    "fastify": "^5.6.2",
+    "openai": "^6.10.0",
+    "tsx": "^4.20.6",
+    "undici": "^7.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.13"
+  }
+}
