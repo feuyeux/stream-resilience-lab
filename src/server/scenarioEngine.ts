@@ -72,8 +72,12 @@ export function selectStream(request: FastifyRequest): boolean {
   return Boolean(requestBody(request)?.stream);
 }
 
-export function selectOutput(request: FastifyRequest): string {
+export function selectOutput(protocol: Protocol, request: FastifyRequest): string {
   const headerValue = firstHeaderValue(request.headers["x-mock-output"]);
+  if (protocol === "openai-responses") {
+    return headerValue ?? defaultText;
+  }
+
   return headerValue ?? requestBody(request)?.input ?? defaultText;
 }
 
@@ -219,7 +223,7 @@ export async function handleScenario(
   const scenario = selectScenario(request);
   const model = selectModel(request);
   const stream = selectStream(request);
-  const output = selectOutput(request);
+  const output = selectOutput(protocol, request);
 
   if (stream) {
     await sendStream(protocol, reply, model, scenario, output);
