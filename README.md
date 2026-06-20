@@ -9,11 +9,13 @@ The project has two intentionally named sides:
 
 ## How It Works
 
-![Stream Resilience Lab technical principles poster](docs/assets/stream-resilience-lab-principles.svg)
+![Stream Resilience Lab blackboard architecture poster](docs/assets/streaming-lib.png)
 
 `fault-provider` never calls a real model. It exposes provider-compatible endpoints, chooses a scenario such as `midstream-close` or `half-tool-json`, then emits valid JSON, valid SSE, malformed SSE, delayed streams, rate limits, or socket closes.
 
 `resilience-runner` behaves like a minimal SDK client. It sends the query through the official SDK, observes how the SDK surfaces each failure, applies bounded retry or safe-failure rules, preserves partial output when available, and writes a report describing the problem and mitigation.
+
+The detailed Chinese guide is in [`docs/streaming-resilience.zh-CN.md`](docs/streaming-resilience.zh-CN.md). It contains the full request/response flow, the `S01`-`S20` scenario catalog, and the `UC001`-`UC045` smoke use-case matrix.
 
 ## Install
 
@@ -61,7 +63,13 @@ npm run resilience:scenarios
 npm run resilience:smoke
 ```
 
-Reports are written to `reports/`.
+The smoke matrix prints numbered use cases:
+
+- `UC001`-`UC015`: `openai-chat`
+- `UC016`-`UC030`: `openai-responses`
+- `UC031`-`UC045`: `anthropic`
+
+Reports are written to `reports/`. JSON reports include `use_case_id` when the run came from the smoke matrix or when `--use-case-id <id>` is passed.
 
 Compatibility aliases are also available: `npm run server`, `npm run client`, `npm run scenarios`, and `npm run smoke`.
 
@@ -74,18 +82,42 @@ Compatibility aliases are also available: `npm run server`, `npm run client`, `n
 ## Resilience Behaviors
 
 - Retry before partial output.
+- Honor `retry-after` / `retry-after-ms` when SDK errors expose headers.
 - Track visible partial output from SDK stream errors when the SDK exposes it.
 - Suppress automatic retry after visible partial output.
-- Abort hanging streams with an SDK abort signal.
+- Abort hanging streams with wall and idle timeout SDK abort signals.
 - Block incomplete or unobservable tool-call JSON in `half-tool-json` scenarios.
+- Recover through a fallback model before any partial output is visible.
+- Open circuit-breaker and provider cooldown states after repeated overload failures.
+- Drop overloaded background work instead of retrying low-priority tasks.
+- Require context compaction for context overflow instead of retrying.
+- Guard same-session concurrency and max-turn loops before calling the provider.
+- Fail safely on bounded queue overflow and consumer cancellation.
 - Write structured JSON reports and smoke Markdown summaries.
 
-## Useful Scenarios
+## Scenario Catalog
 
-- `normal`: valid response or valid stream.
-- `rate-limit-retry-after`: 429 before first token.
-- `overloaded-retry-after`: 529 before first token.
-- `midstream-close`: partial text, then socket close.
-- `half-sse-frame`: incomplete SSE frame, then close.
-- `silent-hang`: open stream with no useful deltas.
-- `half-tool-json`: incomplete tool-call JSON; client must fail safely.
+Scenario IDs are stable documentation handles. The canonical source of names is `src/shared/scenarios.ts`.
+
+| ID | Scenario | Client mitigation focus |
+|---|---|---|
+| `S01` | `normal` | Track completed output |
+| `S02` | `slow` | Complete slow stream inside timeout |
+| `S03` | `flood` | Consume high-volume chunks |
+| `S04` | `rate-limit-retry-after` | Retry before partial output; honor retry-after |
+| `S05` | `overloaded-retry-after` | Retry before partial output |
+| `S06` | `server-error` | Retry before partial output |
+| `S07` | `midstream-close` | Return partial output; suppress retry |
+| `S08` | `half-sse-frame` | Block malformed stream |
+| `S09` | `silent-hang` | Abort empty hanging stream |
+| `S10` | `heartbeat-only` | Treat heartbeat-only as no useful content |
+| `S11` | `half-tool-json` | Block incomplete tool JSON |
+| `S12` | `bounded-queue-overflow` | Cancel bounded queue overflow |
+| `S13` | `consumer-drop` | Cancel after downstream consumer drop |
+| `S14` | `fallback-recovery` | Recover through fallback model |
+| `S15` | `circuit-breaker-open` | Open circuit breaker |
+| `S16` | `provider-cooldown` | Open provider cooldown |
+| `S17` | `background-overloaded` | Drop overloaded background work |
+| `S18` | `context-overflow` | Require context compaction |
+| `S19` | `session-lock-conflict` | Block concurrent same-session work |
+| `S20` | `max-turns-exceeded` | Stop max-turn loop before provider call |

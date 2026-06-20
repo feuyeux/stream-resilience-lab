@@ -88,7 +88,7 @@ export function selectOutput(protocol: Protocol, request: FastifyRequest): strin
   return headerValue ?? requestBody(request)?.input ?? defaultText;
 }
 
-export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioName): boolean {
+export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioName, model = "mock-model"): boolean {
   if (scenario === "rate-limit-retry-after") {
     reply.header("retry-after", "1").code(429).send({
       error: { type: "rate_limit_error", message: "mock rate limit" }
@@ -96,7 +96,7 @@ export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioNa
     return true;
   }
 
-  if (scenario === "overloaded-retry-after") {
+  if (scenario === "overloaded-retry-after" || scenario === "circuit-breaker-open" || scenario === "provider-cooldown" || scenario === "background-overloaded") {
     reply.header("retry-after", "1").code(529).send({
       error: { type: "overloaded_error", message: "mock overloaded" }
     });
@@ -110,11 +110,25 @@ export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioNa
     return true;
   }
 
+  if (scenario === "fallback-recovery" && !model.includes("fallback")) {
+    reply.header("retry-after", "1").code(529).send({
+      error: { type: "overloaded_error", message: "primary model overloaded" }
+    });
+    return true;
+  }
+
+  if (scenario === "context-overflow") {
+    reply.code(400).send({
+      error: { type: "context_length_exceeded", message: "mock context_length_exceeded" }
+    });
+    return true;
+  }
+
   return false;
 }
 
 export function sendJson(protocol: Protocol, reply: FastifyReply, model: string, scenario: ScenarioName, text: string): void {
-  if (maybeSendPreTokenError(reply, scenario)) return;
+  if (maybeSendPreTokenError(reply, scenario, model)) return;
 
   const id = `${protocolPrefix(protocol)}_${Date.now()}`;
   if (protocol === "openai-chat") {
@@ -131,10 +145,13 @@ export function sendJson(protocol: Protocol, reply: FastifyReply, model: string,
 }
 
 export async function sendStream(protocol: Protocol, reply: FastifyReply, model: string, scenario: ScenarioName, text: string): Promise<void> {
-  if (maybeSendPreTokenError(reply, scenario)) return;
+  if (maybeSendPreTokenError(reply, scenario, model)) return;
 
   const id = `${protocolPrefix(protocol)}_${Date.now()}`;
-  const chunks = scenario === "flood" ? Array.from({ length: 250 }, (_, index) => `${index} `) : textChunks(text);
+  const chunks =
+    scenario === "flood" || scenario === "bounded-queue-overflow"
+      ? Array.from({ length: 250 }, (_, index) => `${index} `)
+      : textChunks(text);
   const delay = scenario === "slow" ? 150 : 5;
 
   prepareSse(reply);
@@ -203,7 +220,7 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
       writeNamedEvent(reply, event.event, event.data);
     }
 
-    if (scenario === "midstream-close" && index === 1) {
+    if ((scenario === "midstream-close" || scenario === "consumer-drop") && index === 1) {
       destroySse(reply);
       return;
     }

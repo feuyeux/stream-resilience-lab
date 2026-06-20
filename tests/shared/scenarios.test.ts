@@ -16,7 +16,16 @@ describe("scenario catalog", () => {
       "silent-hang",
       "heartbeat-only",
       "half-tool-json",
-      "flood"
+      "flood",
+      "bounded-queue-overflow",
+      "consumer-drop",
+      "fallback-recovery",
+      "circuit-breaker-open",
+      "provider-cooldown",
+      "background-overloaded",
+      "context-overflow",
+      "session-lock-conflict",
+      "max-turns-exceeded"
     ]);
   });
 

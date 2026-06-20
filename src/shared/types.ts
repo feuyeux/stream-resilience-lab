@@ -12,7 +12,16 @@ export type ScenarioName =
   | "silent-hang"
   | "heartbeat-only"
   | "half-tool-json"
-  | "flood";
+  | "flood"
+  | "bounded-queue-overflow"
+  | "consumer-drop"
+  | "fallback-recovery"
+  | "circuit-breaker-open"
+  | "provider-cooldown"
+  | "background-overloaded"
+  | "context-overflow"
+  | "session-lock-conflict"
+  | "max-turns-exceeded";
 
 export type ProblemKind =
   | "none"
@@ -24,6 +33,11 @@ export type ProblemKind =
   | "idle_timeout"
   | "wall_timeout"
   | "unsafe_partial_tool_call"
+  | "stream_backpressure"
+  | "consumer_cancelled"
+  | "context_overflow"
+  | "session_lock_conflict"
+  | "max_turns_exceeded"
   | "sdk_error"
   | "unknown";
 
@@ -37,6 +51,13 @@ export type RunStatus =
   | "aborted_idle_timeout"
   | "aborted_content_idle_timeout"
   | "aborted_wall_timeout"
+  | "circuit_opened"
+  | "cooldown_opened"
+  | "dropped_background"
+  | "consumer_cancelled"
+  | "context_compaction_required"
+  | "session_locked"
+  | "max_turns_exceeded"
   | "failed";
 
 export interface ScenarioDefinition {
@@ -48,6 +69,7 @@ export interface ScenarioDefinition {
 }
 
 export interface RunOptions {
+  useCaseId?: string;
   protocol: Protocol;
   query: string;
   mode: Mode;
@@ -58,6 +80,11 @@ export interface RunOptions {
   idleTimeoutMs: number;
   wallTimeoutMs: number;
   fallbackModel?: string;
+  priority?: "foreground" | "background";
+  maxStreamEvents?: number;
+  sessionId?: string;
+  currentTurn?: number;
+  maxTurns?: number;
   reportDir: string;
   json: boolean;
 }
@@ -75,6 +102,7 @@ export interface StreamObservation {
 
 export interface RunReport {
   request_id: string;
+  use_case_id?: string;
   protocol: Protocol;
   mode: Mode;
   scenario: ScenarioName;

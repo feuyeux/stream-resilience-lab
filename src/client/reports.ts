@@ -15,11 +15,11 @@ export async function writeSmokeSummary(reportDir: string, reports: RunReport[])
   const lines = [
     "# Smoke Summary",
     "",
-    "| Protocol | Scenario | Problem | Mitigation | Result |",
-    "|---|---|---|---|---|",
+    "| Use Case | Protocol | Scenario | Problem | Mitigation | Result |",
+    "|---|---|---|---|---|---|",
     ...reports.map((report) => {
       const mitigation = report.mitigation.actions.join(", ") || "none";
-      return `| ${report.protocol} | ${report.scenario} | ${report.problem.kind} | ${mitigation} | ${report.result.status} |`;
+      return `| ${report.use_case_id ?? "-"} | ${report.protocol} | ${report.scenario} | ${report.problem.kind} | ${mitigation} | ${report.result.status} |`;
     }),
     ""
   ];

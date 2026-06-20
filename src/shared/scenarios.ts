@@ -79,6 +79,69 @@ export const scenarios: ScenarioDefinition[] = [
     streamOnly: true,
     description: "emits many chunks quickly",
     expectedProblem: "none"
+  },
+  {
+    name: "bounded-queue-overflow",
+    protocols: [...allProtocols],
+    streamOnly: true,
+    description: "emits more chunks than the client queue budget allows",
+    expectedProblem: "stream_backpressure"
+  },
+  {
+    name: "consumer-drop",
+    protocols: [...allProtocols],
+    streamOnly: true,
+    description: "emits partial text until the downstream consumer disconnects",
+    expectedProblem: "consumer_cancelled"
+  },
+  {
+    name: "fallback-recovery",
+    protocols: [...allProtocols],
+    streamOnly: false,
+    description: "fails on the primary model and succeeds on a fallback model",
+    expectedProblem: "overloaded"
+  },
+  {
+    name: "circuit-breaker-open",
+    protocols: [...allProtocols],
+    streamOnly: false,
+    description: "opens a circuit after repeated provider failures",
+    expectedProblem: "overloaded"
+  },
+  {
+    name: "provider-cooldown",
+    protocols: [...allProtocols],
+    streamOnly: false,
+    description: "opens a provider cooldown after repeated overload responses",
+    expectedProblem: "overloaded"
+  },
+  {
+    name: "background-overloaded",
+    protocols: [...allProtocols],
+    streamOnly: false,
+    description: "drops background work when the provider is overloaded",
+    expectedProblem: "overloaded"
+  },
+  {
+    name: "context-overflow",
+    protocols: [...allProtocols],
+    streamOnly: false,
+    description: "returns a context length error that requires compaction",
+    expectedProblem: "context_overflow"
+  },
+  {
+    name: "session-lock-conflict",
+    protocols: [...allProtocols],
+    streamOnly: false,
+    description: "blocks concurrent work for the same session",
+    expectedProblem: "session_lock_conflict"
+  },
+  {
+    name: "max-turns-exceeded",
+    protocols: [...allProtocols],
+    streamOnly: false,
+    description: "stops a loop before exceeding the configured max turns",
+    expectedProblem: "max_turns_exceeded"
   }
 ];
 

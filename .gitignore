@@ -63,9 +63,12 @@ $RECYCLE.BIN/
 # ============================================
 # Editor / IDE
 # ============================================
-.vscode/
+.vscode/*
+!.vscode/
 !.vscode/extensions.json
 !.vscode/settings.json.example
+!.vscode/launch.json
+!.vscode/tasks.json
 .idea/
 *.swp
 *.swo

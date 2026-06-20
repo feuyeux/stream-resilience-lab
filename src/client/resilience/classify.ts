@@ -11,6 +11,8 @@ export function classifyError(error: unknown): ProblemKind {
   if (status && status >= 500) return "server_error";
 
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+  if (message.includes("context_length") || message.includes("context length") || message.includes("context overflow")) return "context_overflow";
+  if (message.includes("consumer dropped") || message.includes("consumer cancelled")) return "consumer_cancelled";
   if (message.includes("timeout") || message.includes("aborted")) return "idle_timeout";
   if (message.includes("terminated") || message.includes("socket") || message.includes("connection") || message.includes("destroyed")) {
     return "stream_interrupted";

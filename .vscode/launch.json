@@ -1,0 +1,267 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Fault Provider",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/src/server/index.ts",
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "HOST": "127.0.0.1",
+        "PORT": "3000"
+      },
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "${workspaceFolder}/node_modules/**"]
+    },
+    {
+      "name": "Debug Resilience Runner: Pick Scenario (Stream)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/src/client/cli.ts",
+      "args": [
+        "run",
+        "${input:protocol}",
+        "${input:query}",
+        "--scenario",
+        "${input:scenario}",
+        "--use-case-id",
+        "${input:useCaseId}",
+        "--model",
+        "${input:model}",
+        "--base-url",
+        "${input:baseUrl}",
+        "--max-attempts",
+        "${input:maxAttempts}",
+        "--idle-timeout-ms",
+        "${input:idleTimeoutMs}",
+        "--wall-timeout-ms",
+        "${input:wallTimeoutMs}",
+        "--fallback-model",
+        "${input:fallbackModel}",
+        "--priority",
+        "${input:priority}",
+        "--max-stream-events",
+        "${input:maxStreamEvents}",
+        "--session-id",
+        "${input:sessionId}",
+        "--current-turn",
+        "${input:currentTurn}",
+        "--max-turns",
+        "${input:maxTurns}",
+        "--report-dir",
+        "${input:reportDir}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "preLaunchTask": "wait-for-fault-provider",
+      "skipFiles": ["<node_internals>/**", "${workspaceFolder}/node_modules/**"]
+    },
+    {
+      "name": "Debug Resilience Runner: Pick Scenario (Non-Stream)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/src/client/cli.ts",
+      "args": [
+        "run",
+        "${input:protocol}",
+        "${input:query}",
+        "--no-stream",
+        "--scenario",
+        "${input:scenario}",
+        "--use-case-id",
+        "${input:useCaseId}",
+        "--model",
+        "${input:model}",
+        "--base-url",
+        "${input:baseUrl}",
+        "--max-attempts",
+        "${input:maxAttempts}",
+        "--idle-timeout-ms",
+        "${input:idleTimeoutMs}",
+        "--wall-timeout-ms",
+        "${input:wallTimeoutMs}",
+        "--fallback-model",
+        "${input:fallbackModel}",
+        "--priority",
+        "${input:priority}",
+        "--max-stream-events",
+        "${input:maxStreamEvents}",
+        "--session-id",
+        "${input:sessionId}",
+        "--current-turn",
+        "${input:currentTurn}",
+        "--max-turns",
+        "${input:maxTurns}",
+        "--report-dir",
+        "${input:reportDir}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "preLaunchTask": "wait-for-fault-provider",
+      "skipFiles": ["<node_internals>/**", "${workspaceFolder}/node_modules/**"]
+    },
+    {
+      "name": "Debug Resilience Runner: Smoke Matrix",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${workspaceFolder}/src/client/cli.ts",
+      "args": ["smoke", "--base-url", "${input:baseUrl}", "--report-dir", "${input:reportDir}"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "preLaunchTask": "wait-for-fault-provider",
+      "skipFiles": ["<node_internals>/**", "${workspaceFolder}/node_modules/**"]
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Server + Client: Pick Scenario (Stream)",
+      "configurations": ["Debug Fault Provider", "Debug Resilience Runner: Pick Scenario (Stream)"],
+      "stopAll": true
+    },
+    {
+      "name": "Debug Server + Client: Pick Scenario (Non-Stream)",
+      "configurations": ["Debug Fault Provider", "Debug Resilience Runner: Pick Scenario (Non-Stream)"],
+      "stopAll": true
+    },
+    {
+      "name": "Debug Server + Client: Smoke Matrix",
+      "configurations": ["Debug Fault Provider", "Debug Resilience Runner: Smoke Matrix"],
+      "stopAll": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "protocol",
+      "type": "pickString",
+      "description": "Protocol",
+      "options": ["openai-chat", "openai-responses", "anthropic"],
+      "default": "openai-chat"
+    },
+    {
+      "id": "scenario",
+      "type": "pickString",
+      "description": "Scenario",
+      "options": [
+        "normal",
+        "slow",
+        "rate-limit-retry-after",
+        "overloaded-retry-after",
+        "server-error",
+        "midstream-close",
+        "half-sse-frame",
+        "silent-hang",
+        "heartbeat-only",
+        "half-tool-json",
+        "flood",
+        "bounded-queue-overflow",
+        "consumer-drop",
+        "fallback-recovery",
+        "circuit-breaker-open",
+        "provider-cooldown",
+        "background-overloaded",
+        "context-overflow",
+        "session-lock-conflict",
+        "max-turns-exceeded"
+      ],
+      "default": "midstream-close"
+    },
+    {
+      "id": "query",
+      "type": "promptString",
+      "description": "User query",
+      "default": "hello"
+    },
+    {
+      "id": "useCaseId",
+      "type": "promptString",
+      "description": "Optional use case id",
+      "default": ""
+    },
+    {
+      "id": "model",
+      "type": "promptString",
+      "description": "Model name",
+      "default": "mock-model"
+    },
+    {
+      "id": "baseUrl",
+      "type": "promptString",
+      "description": "Provider base URL",
+      "default": "http://127.0.0.1:3000/v1"
+    },
+    {
+      "id": "maxAttempts",
+      "type": "promptString",
+      "description": "Max attempts",
+      "default": "2"
+    },
+    {
+      "id": "idleTimeoutMs",
+      "type": "promptString",
+      "description": "Idle timeout ms",
+      "default": "1000"
+    },
+    {
+      "id": "wallTimeoutMs",
+      "type": "promptString",
+      "description": "Wall timeout ms",
+      "default": "5000"
+    },
+    {
+      "id": "fallbackModel",
+      "type": "promptString",
+      "description": "Optional fallback model",
+      "default": ""
+    },
+    {
+      "id": "priority",
+      "type": "pickString",
+      "description": "Request priority",
+      "options": ["foreground", "background"],
+      "default": "foreground"
+    },
+    {
+      "id": "maxStreamEvents",
+      "type": "promptString",
+      "description": "Optional max stream events",
+      "default": ""
+    },
+    {
+      "id": "sessionId",
+      "type": "promptString",
+      "description": "Optional session lock key",
+      "default": ""
+    },
+    {
+      "id": "currentTurn",
+      "type": "promptString",
+      "description": "Optional current turn count",
+      "default": ""
+    },
+    {
+      "id": "maxTurns",
+      "type": "promptString",
+      "description": "Optional max turn count",
+      "default": ""
+    },
+    {
+      "id": "reportDir",
+      "type": "promptString",
+      "description": "Report directory",
+      "default": "reports"
+    }
+  ]
+}

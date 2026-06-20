@@ -18,6 +18,7 @@ afterEach(async () => {
 function report(): RunReport {
   return {
     request_id: "mock_1",
+    use_case_id: "UC033",
     protocol: "anthropic",
     mode: "stream",
     scenario: "midstream-close",
@@ -34,12 +35,14 @@ describe("reports", () => {
     const path = await writeJsonReport(dir, report());
     const content = JSON.parse(await readFile(path, "utf8"));
     expect(content.request_id).toBe("mock_1");
+    expect(content.use_case_id).toBe("UC033");
   });
 
   it("writes a smoke summary table", async () => {
     const path = await writeSmokeSummary(dir, [report()]);
     const content = await readFile(path, "utf8");
-    expect(content).toContain("| Protocol | Scenario | Problem | Mitigation | Result |");
+    expect(content).toContain("| Use Case | Protocol | Scenario | Problem | Mitigation | Result |");
+    expect(content).toContain("UC033");
     expect(content).toContain("anthropic");
   });
 });
