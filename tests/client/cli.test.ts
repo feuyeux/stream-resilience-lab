@@ -1,5 +1,8 @@
+import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { formatHumanReport, smokeCases } from "../../src/client/cli.js";
+import { formatHumanReport, runOne, smokeCases, smokeModelForUseCase } from "../../src/client/cli.js";
 import type { RunReport } from "../../src/shared/types.js";
 
 describe("CLI formatting", () => {
@@ -32,5 +35,52 @@ describe("CLI formatting", () => {
     expect(smokeCases.map((testCase) => testCase.id)).toEqual(
       Array.from({ length: 45 }, (_, index) => `UC${String(index + 1).padStart(3, "0")}`)
     );
+  });
+
+  it("uses a distinct provider key model for each smoke use case", () => {
+    const models = smokeCases.map((testCase) => smokeModelForUseCase(testCase.id));
+    expect(new Set(models).size).toBe(smokeCases.length);
+    expect(models).toContain("uc010-model");
+    expect(models).toContain("uc011-model");
+  });
+
+  it("runs with injected logger and runner without writing reports from the flow method", async () => {
+    const reportDir = await mkdtemp(join(tmpdir(), "stream-resilience-run-one-"));
+    const logEvents: string[] = [];
+
+    try {
+      const { outcome, text } = await runOne(
+        {
+          protocol: "openai-chat",
+          query: "hello",
+          mode: "stream",
+          scenario: "normal",
+          model: "mock-model",
+          baseUrl: "http://127.0.0.1:3000/v1",
+          maxAttempts: 2,
+          idleTimeoutMs: 1000,
+          wallTimeoutMs: 5000,
+          reportDir,
+          json: false
+        },
+        {
+          logger: {
+            log(event) {
+              logEvents.push(event.type);
+            }
+          },
+          runners: {
+            "openai-chat": async () => ({ text: "ok", events: ["done"] })
+          }
+        }
+      );
+
+      expect(text).toBe("ok");
+      expect(outcome.result.status).toBe("completed");
+      expect(logEvents).toEqual(["run_started", "attempt_started", "attempt_succeeded", "run_finished"]);
+      expect(await readdir(reportDir)).toEqual([]);
+    } finally {
+      await rm(reportDir, { force: true, recursive: true });
+    }
   });
 });

@@ -37,6 +37,7 @@ export async function runOpenAIChat(input: SdkRunInput): Promise<SdkRunResult> {
 
   try {
     for await (const chunk of stream) {
+      input.recordStreamProgress?.();
       events.push(chunk.object);
       const delta = chunk.choices[0]?.delta;
       if (delta?.content) {

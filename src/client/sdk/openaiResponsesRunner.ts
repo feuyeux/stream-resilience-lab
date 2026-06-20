@@ -37,6 +37,7 @@ export async function runOpenAIResponses(input: SdkRunInput): Promise<SdkRunResu
 
   try {
     for await (const event of stream) {
+      input.recordStreamProgress?.();
       events.push(event.type);
 
       if (event.type === "response.output_text.delta") {

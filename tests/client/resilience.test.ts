@@ -11,6 +11,7 @@ describe("resilience policy", () => {
 
   it("retries before partial output", async () => {
     let calls = 0;
+    const logEvents: string[] = [];
     const report = await runWithResilience(
       {
         protocol: "openai-chat",
@@ -34,11 +35,28 @@ describe("resilience policy", () => {
         }
         return { text: "ok", events: ["done"] };
       },
-      { sleep: async () => undefined, random: () => 0.5 }
+      {
+        sleep: async () => undefined,
+        random: () => 0.5,
+        logger: {
+          log: async (event) => {
+            logEvents.push(event.type);
+          }
+        }
+      }
     );
 
     expect(report.result.status).toBe("recovered");
     expect(report.mitigation.retry_attempts).toBe(1);
+    expect(logEvents).toEqual([
+      "run_started",
+      "attempt_started",
+      "attempt_failed",
+      "retry_scheduled",
+      "attempt_started",
+      "attempt_succeeded",
+      "run_finished"
+    ]);
   });
 
   it("marks incomplete tool JSON as safe failure", async () => {
@@ -270,8 +288,8 @@ describe("resilience policy", () => {
         query: "hello",
         mode: "stream",
         scenario: "circuit-breaker-open",
-        model: "mock-model",
-        baseUrl: "http://mock/v1",
+        model: "opened-circuit-model",
+        baseUrl: "http://opened-circuit/v1",
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
@@ -299,8 +317,8 @@ describe("resilience policy", () => {
         query: "hello",
         mode: "stream",
         scenario: "provider-cooldown",
-        model: "mock-model",
-        baseUrl: "http://mock/v1",
+        model: "opened-cooldown-model",
+        baseUrl: "http://opened-cooldown/v1",
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
@@ -357,6 +375,263 @@ describe("resilience policy", () => {
     expect(called).toBe(false);
     expect(blocked.result.status).toBe("cooldown_opened");
     expect(blocked.mitigation.actions).toContain("blocked_provider_cooldown");
+  });
+
+  it("blocks later requests for a provider key after the circuit opens", async () => {
+    const baseOptions = {
+      protocol: "openai-chat" as const,
+      query: "hello",
+      mode: "stream" as const,
+      scenario: "circuit-breaker-open" as const,
+      model: "circuit-model",
+      baseUrl: "http://circuit/v1",
+      maxAttempts: 1,
+      idleTimeoutMs: 500,
+      wallTimeoutMs: 2000,
+      reportDir: "reports",
+      json: false
+    };
+
+    await runWithResilience(
+      baseOptions,
+      async () => {
+        const error = new Error("mock overloaded") as Error & { status: number };
+        error.status = 529;
+        throw error;
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    let called = false;
+    const blocked = await runWithResilience(
+      { ...baseOptions, scenario: "normal" },
+      async () => {
+        called = true;
+        return { text: "should not run", events: ["done"] };
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(called).toBe(false);
+    expect(blocked.problem.kind).toBe("overloaded");
+    expect(blocked.result.status).toBe("circuit_opened");
+    expect(blocked.mitigation.actions).toContain("blocked_circuit_breaker");
+  });
+
+  it("blocks later requests during provider cooldown regardless of scenario", async () => {
+    const baseOptions = {
+      protocol: "openai-chat" as const,
+      query: "hello",
+      mode: "stream" as const,
+      scenario: "provider-cooldown" as const,
+      model: "generic-cooldown-model",
+      baseUrl: "http://generic-cooldown/v1",
+      maxAttempts: 1,
+      idleTimeoutMs: 500,
+      wallTimeoutMs: 2000,
+      reportDir: "reports",
+      json: false
+    };
+
+    await runWithResilience(
+      baseOptions,
+      async () => {
+        const error = new Error("mock overloaded") as Error & { status: number };
+        error.status = 529;
+        throw error;
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    let called = false;
+    const blocked = await runWithResilience(
+      { ...baseOptions, scenario: "normal" },
+      async () => {
+        called = true;
+        return { text: "should not run", events: ["done"] };
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(called).toBe(false);
+    expect(blocked.result.status).toBe("cooldown_opened");
+    expect(blocked.mitigation.actions).toContain("blocked_provider_cooldown");
+  });
+
+  it("reports wall timeout when the wall timer aborts first", async () => {
+    const report = await runWithResilience(
+      {
+        protocol: "openai-chat",
+        query: "hello",
+        mode: "stream",
+        scenario: "silent-hang",
+        model: "mock-model",
+        baseUrl: "http://wall-timeout/v1",
+        maxAttempts: 1,
+        idleTimeoutMs: 100,
+        wallTimeoutMs: 5,
+        reportDir: "reports",
+        json: false
+      },
+      async (signal): Promise<never> => {
+        return await new Promise<never>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(report.problem.kind).toBe("wall_timeout");
+    expect(report.result.status).toBe("aborted_wall_timeout");
+    expect(report.mitigation.actions).toContain("aborted_wall_timeout");
+  });
+
+  it("reports idle timeout when the idle timer aborts first", async () => {
+    const report = await runWithResilience(
+      {
+        protocol: "openai-chat",
+        query: "hello",
+        mode: "stream",
+        scenario: "silent-hang",
+        model: "mock-model",
+        baseUrl: "http://idle-timeout/v1",
+        maxAttempts: 1,
+        idleTimeoutMs: 5,
+        wallTimeoutMs: 100,
+        reportDir: "reports",
+        json: false
+      },
+      async (signal): Promise<never> => {
+        return await new Promise<never>((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(report.problem.kind).toBe("idle_timeout");
+    expect(report.result.status).toBe("aborted_idle_timeout");
+    expect(report.mitigation.actions).toContain("aborted_idle_timeout");
+  });
+
+  it("resets the idle timer when stream progress is reported", async () => {
+    const report = await runWithResilience(
+      {
+        protocol: "openai-chat",
+        query: "hello",
+        mode: "stream",
+        scenario: "slow",
+        model: "mock-model",
+        baseUrl: "http://idle-progress/v1",
+        maxAttempts: 1,
+        idleTimeoutMs: 30,
+        wallTimeoutMs: 200,
+        reportDir: "reports",
+        json: false
+      },
+      async (signal, context) => {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 20);
+          signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          }, { once: true });
+        });
+        context.recordStreamProgress();
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 20);
+          signal.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          }, { once: true });
+        });
+        return { text: "ok", events: ["done"] };
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(report.result.status).toBe("completed_slow");
+    expect(report.problem.kind).toBe("none");
+  });
+
+  it("uses wall timeout as a hard cap for slow streams even when progress is reported", async () => {
+    const timeoutEvents: Array<{ timeout_kind: string; timeout_ms: number; attempt: number }> = [];
+    const report = await runWithResilience(
+      {
+        protocol: "openai-chat",
+        query: "hello",
+        mode: "stream",
+        scenario: "slow",
+        model: "mock-model",
+        baseUrl: "http://slow-wall-timeout/v1",
+        maxAttempts: 1,
+        idleTimeoutMs: 50,
+        wallTimeoutMs: 25,
+        reportDir: "reports",
+        json: false
+      },
+      async (signal, context): Promise<never> => {
+        while (true) {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(resolve, 10);
+            signal.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(signal.reason);
+            }, { once: true });
+          });
+          context.recordStreamProgress();
+        }
+      },
+      {
+        sleep: async () => undefined,
+        random: () => 0.5,
+        logger: {
+          log(event) {
+            if (event.type === "timeout_triggered") {
+              timeoutEvents.push({
+                timeout_kind: event.timeout_kind,
+                timeout_ms: event.timeout_ms,
+                attempt: event.attempt
+              });
+            }
+          }
+        }
+      }
+    );
+
+    expect(report.problem.kind).toBe("wall_timeout");
+    expect(report.result.status).toBe("aborted_wall_timeout");
+    expect(report.mitigation.actions).toContain("aborted_wall_timeout");
+    expect(timeoutEvents).toEqual([{ timeout_kind: "wall_timeout", timeout_ms: 25, attempt: 1 }]);
+  });
+
+  it("treats an empty result returned after wall abort as wall timeout", async () => {
+    const report = await runWithResilience(
+      {
+        protocol: "openai-chat",
+        query: "hello",
+        mode: "stream",
+        scenario: "slow",
+        model: "mock-model",
+        baseUrl: "http://slow-empty-after-abort/v1",
+        maxAttempts: 1,
+        idleTimeoutMs: 100,
+        wallTimeoutMs: 5,
+        reportDir: "reports",
+        json: false
+      },
+      async (signal) => {
+        await new Promise<void>((resolve) => {
+          signal.addEventListener("abort", () => resolve(), { once: true });
+        });
+        return { text: "", events: [] };
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(report.problem.kind).toBe("wall_timeout");
+    expect(report.result.status).toBe("aborted_wall_timeout");
+    expect(report.mitigation.actions).toContain("aborted_wall_timeout");
   });
 
   it("drops background requests instead of retrying overloaded work", async () => {

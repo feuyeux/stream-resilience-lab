@@ -7,6 +7,7 @@ export interface SdkRunInput {
   stream: boolean;
   scenario: ScenarioName;
   signal?: AbortSignal;
+  recordStreamProgress?: () => void;
 }
 
 export interface SdkRunResult {

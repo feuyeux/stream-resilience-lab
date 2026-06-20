@@ -1,12 +1,31 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { RunReport } from "../shared/types.js";
+import type { RunLogger, RunOptions, RunOutcome, RunReport } from "../shared/types.js";
+
+export function buildRunReport(options: RunOptions, outcome: RunOutcome): RunReport {
+  return {
+    ...outcome,
+    use_case_id: options.useCaseId,
+    protocol: options.protocol,
+    mode: options.mode,
+    scenario: options.scenario
+  };
+}
 
 export async function writeJsonReport(reportDir: string, report: RunReport): Promise<string> {
   await mkdir(reportDir, { recursive: true });
   const path = join(reportDir, `${report.request_id}.json`);
   await writeFile(path, `${JSON.stringify(report, null, 2)}\n`, "utf8");
   return path;
+}
+
+export function createFileRunLogger(reportDir: string, options: RunOptions): RunLogger {
+  return {
+    async log(event) {
+      if (event.type !== "run_finished") return undefined;
+      return writeJsonReport(reportDir, buildRunReport(options, event.outcome));
+    }
+  };
 }
 
 export async function writeSmokeSummary(reportDir: string, reports: RunReport[]): Promise<string> {

@@ -2,8 +2,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { writeJsonReport, writeSmokeSummary } from "../../src/client/reports.js";
-import type { RunReport } from "../../src/shared/types.js";
+import { buildRunReport, createFileRunLogger, writeJsonReport, writeSmokeSummary } from "../../src/client/reports.js";
+import type { RunOptions, RunOutcome, RunReport } from "../../src/shared/types.js";
 
 let dir: string;
 
@@ -30,12 +30,53 @@ function report(): RunReport {
   };
 }
 
+function options(): RunOptions {
+  return {
+    useCaseId: "UC033",
+    protocol: "anthropic",
+    mode: "stream",
+    scenario: "midstream-close",
+    query: "hello",
+    model: "mock-model",
+    baseUrl: "http://127.0.0.1:3000/v1",
+    maxAttempts: 2,
+    idleTimeoutMs: 1000,
+    wallTimeoutMs: 5000,
+    reportDir: dir,
+    json: false
+  };
+}
+
+function outcome(): RunOutcome {
+  const { use_case_id, protocol, mode, scenario, ...rest } = report();
+  void use_case_id;
+  void protocol;
+  void mode;
+  void scenario;
+  return rest;
+}
+
 describe("reports", () => {
   it("writes a JSON report", async () => {
     const path = await writeJsonReport(dir, report());
     const content = JSON.parse(await readFile(path, "utf8"));
     expect(content.request_id).toBe("mock_1");
     expect(content.use_case_id).toBe("UC033");
+  });
+
+  it("builds a report from run options and outcome", () => {
+    expect(buildRunReport(options(), outcome())).toEqual(report());
+  });
+
+  it("writes the final JSON report from a run outcome log event", async () => {
+    const logger = createFileRunLogger(dir, options());
+    await logger.log({ type: "run_started", protocol: "anthropic", scenario: "midstream-close" });
+    const path = await logger.log({ type: "run_finished", outcome: outcome() });
+
+    expect(typeof path).toBe("string");
+    const content = JSON.parse(await readFile(String(path), "utf8"));
+    expect(content.request_id).toBe("mock_1");
+    expect(content.result.status).toBe("partial_returned");
   });
 
   it("writes a smoke summary table", async () => {

@@ -54,6 +54,7 @@ export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunRe
 
   try {
     for await (const event of stream) {
+      input.recordStreamProgress?.();
       events.push(event.type);
 
       if (event.type === "content_block_delta" && event.delta.type === "text_delta") {

@@ -13,7 +13,7 @@ The project has two intentionally named sides:
 
 `fault-provider` never calls a real model. It exposes provider-compatible endpoints, chooses a scenario such as `midstream-close` or `half-tool-json`, then emits valid JSON, valid SSE, malformed SSE, delayed streams, rate limits, or socket closes.
 
-`resilience-runner` behaves like a minimal SDK client. It sends the query through the official SDK, observes how the SDK surfaces each failure, applies bounded retry or safe-failure rules, preserves partial output when available, and writes a report describing the problem and mitigation.
+`resilience-runner` behaves like a minimal SDK client. It sends the query through the official SDK, observes how the SDK surfaces each failure, applies bounded retry or safe-failure rules, preserves partial output when available, and emits structured run log events. Request flow code returns a run outcome and receives only a logger abstraction; the reports module projects that outcome into JSON reports.
 
 The detailed Chinese guide is in [`docs/streaming-resilience.zh-CN.md`](docs/streaming-resilience.zh-CN.md). It contains the full request/response flow, the `S01`-`S20` scenario catalog, and the `UC001`-`UC045` smoke use-case matrix.
 
@@ -85,15 +85,15 @@ Compatibility aliases are also available: `npm run server`, `npm run client`, `n
 - Honor `retry-after` / `retry-after-ms` when SDK errors expose headers.
 - Track visible partial output from SDK stream errors when the SDK exposes it.
 - Suppress automatic retry after visible partial output.
-- Abort hanging streams with wall and idle timeout SDK abort signals.
+- Abort hanging streams with reasoned wall/idle timeout signals, resetting idle timers on stream progress.
 - Block incomplete or unobservable tool-call JSON in `half-tool-json` scenarios.
 - Recover through a fallback model before any partial output is visible.
-- Open circuit-breaker and provider cooldown states after repeated overload failures.
+- Open circuit-breaker and provider cooldown states, then block later requests for the same provider key.
 - Drop overloaded background work instead of retrying low-priority tasks.
 - Require context compaction for context overflow instead of retrying.
 - Guard same-session concurrency and max-turn loops before calling the provider.
 - Fail safely on bounded queue overflow and consumer cancellation.
-- Write structured JSON reports and smoke Markdown summaries.
+- Emit structured run logs; the default file logger writes JSON reports and smoke Markdown summaries.
 
 ## Scenario Catalog
 

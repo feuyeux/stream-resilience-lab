@@ -100,12 +100,8 @@ export interface StreamObservation {
   partialToolJson?: string;
 }
 
-export interface RunReport {
+export interface RunOutcome {
   request_id: string;
-  use_case_id?: string;
-  protocol: Protocol;
-  mode: Mode;
-  scenario: ScenarioName;
   output_text?: string;
   problem: {
     kind: ProblemKind;
@@ -128,4 +124,63 @@ export interface RunReport {
     ended_at: string;
     duration_ms: number;
   };
+}
+
+export interface RunReport extends RunOutcome {
+  use_case_id?: string;
+  protocol: Protocol;
+  mode: Mode;
+  scenario: ScenarioName;
+}
+
+export type RunLogEvent =
+  | {
+      type: "run_started";
+      protocol: Protocol;
+      scenario: ScenarioName;
+      use_case_id?: string;
+    }
+  | {
+      type: "attempt_started";
+      attempt: number;
+      phase: "primary" | "fallback";
+      model: string;
+    }
+  | {
+      type: "attempt_succeeded";
+      attempt: number;
+      phase: "primary" | "fallback";
+      model: string;
+      received_chars: number;
+      event_count: number;
+    }
+  | {
+      type: "attempt_failed";
+      attempt: number;
+      phase: "primary" | "fallback";
+      model: string;
+      problem: ProblemKind;
+      message?: string;
+    }
+  | {
+      type: "retry_scheduled";
+      attempt: number;
+      delay_ms: number;
+      problem: ProblemKind;
+    }
+  | {
+      type: "timeout_triggered";
+      attempt: number;
+      phase: "primary" | "fallback";
+      model: string;
+      timeout_kind: "idle_timeout" | "wall_timeout";
+      timeout_ms: number;
+    }
+  | {
+      type: "run_finished";
+      outcome: RunOutcome;
+    };
+
+export interface RunLogger {
+  log(event: RunLogEvent): void | string | Promise<void | string>;
 }
