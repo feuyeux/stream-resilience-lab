@@ -1,981 +1,631 @@
-# Stream Resilience Lab — 产品说明与技术指南
+# Stream Resilience Lab：流式故障仿真与客户端弹性指南
 
-> 版本：0.1.0 | 更新日期：2026-06-20
+Stream Resilience Lab 是一个本地 TypeScript/Node.js 实验工具，用来回答一个很具体的问题：
 
----
+> 当 LLM 流式响应在不同阶段失败时，服务端如何稳定复现故障，客户端又如何避免错误重试、重复输出或执行半截工具调用？
 
-## 目录
-
-- [1. 项目概述](#1-项目概述)
-- [2. 核心概念](#2-核心概念)
-- [3. 系统架构](#3-系统架构)
-- [4. 快速开始](#4-快速开始)
-- [5. 故障场景详解](#5-故障场景详解)
-- [6. 弹性策略详解](#6-弹性策略详解)
-- [7. CLI 命令参考](#7-cli-命令参考)
-- [8. 报告格式](#8-报告格式)
-- [9. 协议适配器](#9-协议适配器)
-- [10. SDK Runner](#10-sdk-runner)
-- [11. 测试体系](#11-测试体系)
-- [12. 项目结构与模块职责](#12-项目结构与模块职责)
-- [13. 技术栈](#13-技术栈)
-- [14. 设计原则与最佳实践](#14-设计原则与最佳实践)
-- [15. 常见问题](#15-常见问题)
+本文只围绕这条主线展开。CLI、报告、模块职责等内容保留为附录式说明，避免冲淡核心：**每个场景都要能看清服务端仿真、SDK 暴露、客户端策略和最终报告结果**。
 
 ---
 
-## 1. 项目概述
+## 1. 项目边界
 
-### 1.1 这是什么
+### 1.1 两个角色
 
-Stream Resilience Lab 是一个轻量级 TypeScript/Node.js 实验工具，用于测试 LLM 客户端在面对流式响应故障时的弹性能力。
-
-项目由两个明确命名的对立面组成：
-
-| 组件 | 角色 | 说明 |
+| 组件 | 角色 | 职责 |
 |---|---|---|
-| **fault-provider** | 故障提供者 | 本地运行的 OpenAI/Anthropic 兼容 Mock 推理服务，可按需制造受控故障 |
-| **resilience-runner** | 弹性运行器 | 基于官方 SDK 的客户端，调用故障提供者，应用弹性策略，并记录发生了什么 |
+| `fault-provider` | 故障提供者 | 本地 OpenAI/Anthropic 兼容 Mock 服务，按场景制造可复现故障 |
+| `resilience-runner` | 弹性运行器 | 使用官方 SDK 调用 Mock 服务，分类错误，执行有限重试和安全保护，写出报告 |
 
-### 1.2 解决什么问题
+### 1.2 本项目验证什么
 
-在生产环境中，LLM 流式响应会因各种原因中断：
+- 首 token 前的 429、529、500 是否只在无部分输出时重试。
+- 流中断后是否保留已收到文本，并抑制自动重试。
+- 畸形 SSE 帧是否被归类为安全失败。
+- 挂起流或只有心跳的流是否能被中止并报告为空内容超时。
+- 半截工具 JSON 是否永不执行，也不被当成普通网络错误重试。
+- SDK 升级后，同一故障在 OpenAI Chat、OpenAI Responses、Anthropic Messages 三种协议下如何暴露。
 
-- 服务端在发送部分文本后突然关闭连接
-- 返回不完整的 SSE 数据帧导致解析失败
-- 流保持打开但不发送任何有效内容
-- 速率限制（429）或过载（529）需要在首 token 之前重试
-- 工具调用的 JSON 参数不完整，直接执行可能引发安全问题
+### 1.3 本项目不做什么
 
-这些问题在真实 API 上难以复现和调试。Stream Resilience Lab 提供了一个完全可控的本地环境，让开发者可以：
+- 不调用真实 LLM 服务。
+- 不实现完整 Agent 循环。
+- 不执行真实工具调用。
+- 不实现跨会话 provider cooldown、fallback circuit breaker、bounded stream queue 或 context compaction。
+- 不把所有生产级自保机制都伪装成已经实现的能力。
 
-1. **精确复现**各种流式故障场景
-2. **验证**客户端弹性策略是否正确生效
-3. **记录**每次运行的问题类型和缓解措施
-4. **回归测试** SDK 升级后的行为变化
-
-### 1.3 不做什么
-
-- 不调用真实 LLM 模型
-- 不实现完整的 Agent 循环
-- 不执行真实的工具调用
-- 不提供 CLI 以外的 UI
-- 不包含生产级网关、认证、配额管理
+这些更完整的 Agent 自保机制来自 `D:\coding\creative\hello-olleh\docs\streaming-agent-resilience-analysis.md` 的横向分析，本文会在第 7 章说明哪些已落地，哪些适合作为后续演进。
 
 ---
 
-## 2. 核心概念
+## 2. 最小架构
 
-### 2.1 协议（Protocol）
+### 2.1 数据流
 
-项目支持三种 LLM API 协议：
-
+```text
+CLI
+  -> protocol runner
+  -> official SDK
+  -> fault-provider endpoint
+  -> scenarioEngine
+  -> protocol adapter + SSE writer
+  -> SDK stream/error surface
+  -> resilience policy
+  -> terminal output + JSON/Markdown report
 ```
-openai-chat       → POST /v1/chat/completions   (OpenAI Chat Completions)
-openai-responses  → POST /v1/responses           (OpenAI Responses API)
-anthropic         → POST /v1/messages            (Anthropic Messages API)
-```
 
-### 2.2 模式（Mode）
+### 2.2 三种协议
 
-- **stream**：流式模式，使用 SSE（Server-Sent Events）传输
-- **json**：非流式模式，返回完整 JSON 响应
+| 协议 | 端点 | SDK Runner |
+|---|---|---|
+| `openai-chat` | `POST /v1/chat/completions` | `src/client/sdk/openaiChatRunner.ts` |
+| `openai-responses` | `POST /v1/responses` | `src/client/sdk/openaiResponsesRunner.ts` |
+| `anthropic` | `POST /v1/messages` | `src/client/sdk/anthropicMessagesRunner.ts` |
 
-### 2.3 场景（Scenario）
+### 2.3 为什么使用官方 SDK
 
-场景是故障提供者制造特定行为的剧本。每个场景定义了：
+这个实验关心的不是手写 `fetch` 能不能读完 SSE，而是真实开发者依赖的 SDK 在故障时会暴露什么：HTTP status、连接错误、解析错误、空文本，还是带有部分文本/工具参数的异常。`resilience-runner` 因此禁用 SDK 内置重试（`maxRetries: 0`），把重试和安全决策集中在 `src/client/resilience/policy.ts`。
 
-- `name`：kebab-case 场景名
-- `protocols`：支持的协议列表
-- `streamOnly`：是否仅适用于流式模式
-- `description`：行为描述
-- `expectedProblem`：预期的问题类型
+---
 
-### 2.4 问题类型（ProblemKind）
+## 3. 场景总览
 
-客户端对观测到的故障进行分类：
+| 场景 | 阶段 | 服务端仿真 | 客户端核心决策 | 典型结果 |
+|---|---|---|---|---|
+| `normal` | 正常 | 分块发送文本并正常结束 | 记录完整输出 | `completed` |
+| `slow` | 正常慢流 | 以 150ms 间隔发送文本块 | 在墙钟超时内完成，标记慢速完成 | `completed_slow` |
+| `flood` | 压力变体 | 快速发送 250 个 chunk | 正常消费并记录输出 | `completed` |
+| `rate-limit-retry-after` | 首 token 前 | 返回 429 + `retry-after: 1` | 无部分输出，允许有限重试 | `exhausted` 或 `recovered` |
+| `overloaded-retry-after` | 首 token 前 | 返回 529 + `retry-after: 1` | 无部分输出，允许有限重试 | `exhausted` 或 `recovered` |
+| `server-error` | 首 token 前 | 返回 500 | 无部分输出，允许有限重试 | `exhausted` 或 `recovered` |
+| `midstream-close` | 流中 | 发送两块文本后销毁 socket | 保留部分文本，抑制自动重试 | `partial_returned` |
+| `half-sse-frame` | 流中 | 写入半截 `data:` 帧后销毁 socket | 作为畸形流安全失败 | `safe_failure` |
+| `silent-hang` | 流中 | 发起始帧后保持连接打开 | 由 Abort 结束后归类为空内容超时 | `aborted_content_idle_timeout` 或 `aborted_idle_timeout` |
+| `heartbeat-only` | 流中 | 只发送心跳/ping，不发送文本 | 心跳不算有用内容，空内容超时 | `aborted_content_idle_timeout` 或 `aborted_idle_timeout` |
+| `half-tool-json` | 流中 | 发送半截工具 JSON 后销毁 socket | 不完整工具参数永不执行 | `safe_failure` |
 
-| 类型 | 说明 |
+后续小节按故障阶段展开。每个场景都使用同一结构：服务端如何仿真、SDK/Runner 可能暴露什么、客户端策略如何处理、报告里看到什么。
+
+---
+
+## 4. 场景详解
+
+### 4.1 正常与压力基线
+
+#### `normal`
+
+服务端仿真：`scenarioEngine` 使用默认文本 `Hello, this is a mock streaming response.`，通过 `textChunks()` 按最多 8 个字符切块，每 5ms 发送一个文本增量，最后按协议发送结束事件。
+
+SDK/Runner 暴露：三种 Runner 都累积完整文本和事件列表，不抛错。
+
+客户端策略：`runWithResilience` 看到 `result.text.length > 0`，记录 `tracked_output`。
+
+| 字段 | 值 |
 |---|---|
-| `none` | 无故障 |
-| `rate_limited` | 速率限制（429） |
-| `overloaded` | 服务过载（529/503） |
-| `server_error` | 服务端错误（5xx） |
-| `stream_interrupted` | 流被中断（socket 关闭） |
-| `malformed_stream` | 格式错误的流（SSE 解析失败） |
-| `idle_timeout` | 空闲超时 |
-| `wall_timeout` | 总超时 |
-| `unsafe_partial_tool_call` | 不安全的部分工具调用 |
-| `sdk_error` | SDK 层面错误 |
-| `unknown` | 未知错误 |
+| `problem.kind` | `none` |
+| `mitigation.actions` | `tracked_output` |
+| `result.status` | `completed` |
+| `safe_to_retry_automatically` | `true` |
 
-### 2.5 运行状态（RunStatus）
+#### `slow`
 
-| 状态 | 说明 |
+服务端仿真：与 `normal` 相同，但 chunk 间隔改为 150ms，用来验证慢流不会被误判成中断。
+
+SDK/Runner 暴露：只要在 `wallTimeoutMs` 内完成，Runner 返回完整文本。
+
+客户端策略：成功路径中，`statusForSuccess()` 根据场景把状态标记为 `completed_slow`。
+
+| 字段 | 值 |
 |---|---|
-| `completed` | 正常完成 |
-| `completed_slow` | 慢速完成 |
-| `recovered` | 重试后恢复 |
-| `exhausted` | 重试次数用尽 |
-| `partial_returned` | 返回了部分输出 |
-| `safe_failure` | 安全失败 |
-| `aborted_idle_timeout` | 因空闲超时中止 |
-| `aborted_content_idle_timeout` | 因内容空闲超时中止 |
-| `aborted_wall_timeout` | 因总超时中止 |
-| `failed` | 失败 |
+| `problem.kind` | `none` |
+| `mitigation.actions` | `tracked_output` |
+| `result.status` | `completed_slow` |
+| `safe_to_retry_automatically` | `true` |
 
----
+#### `flood`
 
-## 3. 系统架构
+服务端仿真：生成 `0 ` 到 `249 ` 共 250 个 chunk，每 5ms 快速发送，测试 SDK 和 Runner 是否能持续消费大量增量。
 
-### 3.1 整体数据流
+SDK/Runner 暴露：Runner 累积所有文本，不做队列背压实验。
 
-```
-CLI 命令
-  → 协议 Runner（openai-chat / openai-responses / anthropic）
-  → 官方 SDK（openai / @anthropic-ai/sdk）
-  → 本地 Mock 服务端协议端点
-  → 场景引擎（scenarioEngine）
-  → 协议适配器响应或流
-  → SDK 流/错误表面
-  → 弹性策略（resilience policy）
-  → 终端输出 + 运行报告
-```
+客户端策略：成功消费即记录 `tracked_output`，状态 `completed`。
 
-### 3.2 三层模块结构
+| 字段 | 值 |
+|---|---|
+| `problem.kind` | `none` |
+| `mitigation.actions` | `tracked_output` |
+| `result.status` | `completed` |
+| 当前边界 | 未实现 bounded queue 或 consumer-drop cancellation |
 
-```
-┌─────────────────────────────────────────────────┐
-│                  src/shared/                     │
-│  共享类型、场景目录、重试工具                      │
-│  (types.ts, scenarios.ts, retry.ts)              │
-├──────────────────────┬──────────────────────────┤
-│    src/server/        │     src/client/          │
-│  fault-provider       │  resilience-runner       │
-│                      │                          │
-│  • server.ts          │  • cli.ts                │
-│  • scenarioEngine.ts  │  • resilience/policy.ts  │
-│  • adapters/          │  • resilience/classify.ts│
-│  • sse.ts             │  • sdk/*.ts              │
-│  • index.ts           │  • reports.ts            │
-└──────────────────────┴──────────────────────────┘
-```
+### 4.2 首 token 前错误：可以有限重试
 
-### 3.3 关键设计决策
+这类故障发生在任何文本输出之前。它是最安全的重试窗口，因为用户还没有看到 partial output，也没有半截工具调用状态。
 
-**为什么不直接用 `fetch` 而用官方 SDK？**
+#### `rate-limit-retry-after`
 
-使用官方 SDK 是核心设计决策。真实场景中，开发者依赖 SDK 来解析流、处理错误。如果弹性策略绕过 SDK 的流解析器，就无法验证 SDK 在实际故障中的行为。项目要测量的正是「SDK 如何暴露故障」以及「包裹在 SDK 外的弹性策略如何响应」。
-
-**为什么服务端用 Fastify？**
-
-Fastify 轻量、流式支持直观，且请求/响应处理显式。场景引擎需要直接操作底层 socket（`reply.raw.destroy()`），Fastify 不对此做多余封装。
-
----
-
-## 4. 快速开始
-
-### 4.1 安装
-
-```bash
-npm install
-```
-
-### 4.2 启动故障提供者
-
-```bash
-npm run fault-provider
-```
-
-服务监听地址：
-
-```
-http://127.0.0.1:3000/v1
-```
-
-### 4.3 运行单个场景
-
-推荐的简洁写法（位置参数）：
-
-```bash
-# 协议 + 查询 + 场景 + 总超时(ms)
-npm run resilience-runner -- openai-chat "hello" midstream-close 3000
-npm run resilience-runner -- openai-responses "hello" rate-limit-retry-after 3000
-npm run resilience-runner -- anthropic "hello" half-tool-json 3000
-```
-
-显式标志写法：
-
-```bash
-npm run resilience-runner -- openai-chat "hello" -- --stream --scenario midstream-close --wall-timeout-ms 3000
-```
-
-### 4.4 列出所有场景
-
-```bash
-npm run resilience:scenarios
-```
-
-输出示例：
-
-```
-normal                      openai-chat,openai-responses,anthropic  valid response or valid stream
-rate-limit-retry-after      openai-chat,openai-responses,anthropic  returns 429 with retry-after before first token
-midstream-close             openai-chat,openai-responses,anthropic  emits partial text then closes the socket
-...
-```
-
-### 4.5 运行冒烟矩阵
-
-```bash
-npm run resilience:smoke
-```
-
-自动运行 3 个协议 × 6 个场景 = 18 个测试用例，输出表格并生成报告到 `reports/` 目录。
-
-### 4.6 开发模式
-
-```bash
-npm run dev
-```
-
-同时启动故障提供者并打印示例客户端命令。
-
----
-
-## 5. 故障场景详解
-
-### 5.1 场景总览
-
-| 场景 | 流式专用 | 预期问题 | 说明 |
-|---|---|---|---|
-| `normal` | 否 | `none` | 正常响应或正常流 |
-| `slow` | 否 | `none` | 延迟首 token 和后续 token |
-| `rate-limit-retry-after` | 否 | `rate_limited` | 首 token 前 429 + retry-after |
-| `overloaded-retry-after` | 否 | `overloaded` | 首 token 前 529 + retry-after |
-| `server-error` | 否 | `server_error` | 首 token 前 500 |
-| `midstream-close` | 是 | `stream_interrupted` | 发送部分文本后关闭 socket |
-| `half-sse-frame` | 是 | `malformed_stream` | 写入不完整 SSE 帧后关闭 |
-| `silent-hang` | 是 | `idle_timeout` | 流保持打开但不发送有效事件 |
-| `heartbeat-only` | 是 | `idle_timeout` | 仅发送心跳/ping，无内容 |
-| `half-tool-json` | 是 | `unsafe_partial_tool_call` | 流式发送不完整工具调用 JSON 后关闭 |
-| `flood` | 是 | `none` | 快速发送大量 chunk |
-
-### 5.2 各场景服务端行为
-
-#### normal
-
-生成默认文本 `"Hello, this is a mock streaming response."`，按 8 字符一组分块，每块间隔 5ms 发送，正常结束流。
-
-#### slow
-
-与 normal 相同的分块逻辑，但每块间隔 150ms，用于测试客户端的空闲超时容忍度。
-
-#### rate-limit-retry-after
-
-在发送任何 token 之前返回 HTTP 429 和 `retry-after: 1` 头：
+服务端仿真：`maybeSendPreTokenError()` 在流式和非流式入口最先执行。场景命中后直接返回：
 
 ```json
 { "error": { "type": "rate_limit_error", "message": "mock rate limit" } }
 ```
 
-#### overloaded-retry-after
+HTTP 状态为 429，并附带 `retry-after: 1`。
 
-在发送任何 token 之前返回 HTTP 529 和 `retry-after: 1` 头。
+SDK/Runner 暴露：SDK 抛出带 `status: 429` 的错误。Runner 没有进入流式消费循环，因此没有 `partialText`。
 
-#### server-error
+客户端策略：`classifyError()` 把错误归类为 `rate_limited`。因为 `lastText.length === 0` 且未达到 `maxAttempts`，策略记录 `retry_before_partial_output` 并等待后重试。当前 `runWithResilience` 使用本地指数退避 + jitter；`src/shared/retry.ts` 已有 `parseRetryAfterMs()`，但策略层尚未把 SDK 错误头接入退避选择。
 
-在发送任何 token 之前返回 HTTP 500。
+| 字段 | 值 |
+|---|---|
+| `problem.kind` | `rate_limited` |
+| `mitigation.actions` | `retry_before_partial_output` |
+| `result.status` | Mock 固定失败时为 `exhausted`，真实恢复时可为 `recovered` |
+| 当前边界 | 服务端发送 `retry-after`，策略当前未实际优先使用该头 |
 
-#### midstream-close
+#### `overloaded-retry-after`
 
-开始正常流，发送前 2 个文本块后调用 `reply.raw.destroy()` 直接销毁 socket，不发送终止事件。
+服务端仿真：与 429 对称，返回 529、`retry-after: 1` 和：
 
-#### half-sse-frame
-
-写入不完整的 SSE 数据帧 `data: {"broken":` 然后立即销毁 socket，模拟网络中断导致的截断帧。
-
-#### silent-hang
-
-发送流头部（如 `message_start`、`content_block_start`）后，保持连接打开但不发送任何后续内容，直到客户端关闭。
-
-#### heartbeat-only
-
-发送流头部后，每 200ms 发送一次心跳事件（OpenAI 用 `: heartbeat\n\n` 注释帧，Anthropic 用 `ping` 事件），持续 5 次后保持连接等待客户端关闭。心跳不包含任何文本内容。
-
-#### half-tool-json
-
-发送工具调用头部和部分 JSON 参数 `{"city":"Par`（不完整的 JSON），然后销毁 socket。
-
-各协议的工具调用流式格式：
-- **OpenAI Chat**：`choices[0].delta.tool_calls[0].function.arguments`
-- **OpenAI Responses**：`response.function_call_arguments.delta` 事件
-- **Anthropic**：`content_block_delta` + `input_json_delta` 增量
-
-#### flood
-
-生成 250 个 chunk（`0 ` 到 `249 `），每块间隔 5ms 快速发送，测试客户端是否能无内存溢出地消费大量数据。
-
-### 5.3 场景选择优先级
-
-故障提供者按以下顺序确定场景：
-
+```json
+{ "error": { "type": "overloaded_error", "message": "mock overloaded" } }
 ```
-1. x-mock-scenario 请求头          （最高优先级）
+
+SDK/Runner 暴露：SDK 抛出带 `status: 529` 的错误，无 partial output。
+
+客户端策略：`classifyError()` 映射为 `overloaded`。策略在首 token 前执行有限重试，Mock 持续返回 529 时最终 `exhausted`。
+
+| 字段 | 值 |
+|---|---|
+| `problem.kind` | `overloaded` |
+| `mitigation.actions` | `retry_before_partial_output` |
+| `result.status` | `exhausted` 或 `recovered` |
+| 设计含义 | 过载发生在首 token 前，可重试；发生在 partial output 后则不能无脑重试 |
+
+#### `server-error`
+
+服务端仿真：返回 500 和：
+
+```json
+{ "error": { "type": "server_error", "message": "mock server error" } }
+```
+
+SDK/Runner 暴露：SDK 抛出带 `status: 500` 的错误。
+
+客户端策略：`classifyError()` 将 `status >= 500` 归类为 `server_error`。没有 partial output 时按同一重试路径处理。
+
+| 字段 | 值 |
+|---|---|
+| `problem.kind` | `server_error` |
+| `mitigation.actions` | `retry_before_partial_output` |
+| `result.status` | `exhausted` 或 `recovered` |
+| `safe_to_retry_automatically` | 最终失败报告中为 `true`，表示上层仍可安全重放请求 |
+
+### 4.3 流中断：保住 partial output，停止自动重放
+
+#### `midstream-close`
+
+服务端仿真：正常发送文本增量，但在第二个 chunk 之后调用 `destroySse(reply)`，不发送协议结束事件。
+
+```typescript
+for (const [index, chunk] of chunks.entries()) {
+  await sleep(delay);
+  // 按协议写入文本 chunk
+  if (scenario === "midstream-close" && index === 1) {
+    destroySse(reply);
+    return;
+  }
+}
+```
+
+SDK/Runner 暴露：SDK 在后续读取中抛出连接类错误。Runner 的 `catch` 会把已累积的 `partialText`、`partialEvents` 和可能存在的 `partialToolJson` 附加到错误对象上再抛出。
+
+客户端策略：`extractPartialState()` 读到部分文本后，策略认为故障发生在 partial output 之后。此时自动重试会把同一回答再输出一次，或者让 fallback 模型生成不一致续写，所以策略返回部分内容并抑制重试。
+
+| 字段 | 值 |
+|---|---|
+| `problem.kind` | 通常为 `stream_interrupted` |
+| `problem.after_partial_output` | `true` |
+| `mitigation.actions` | `tracked_partial_output`, `suppressed_retry_after_partial` |
+| `result.status` | `partial_returned` |
+| `safe_to_retry_automatically` | `false` |
+
+这个决策对应外部分析中的共同经验：**stream 已经开始输出后，fallback 或 retry 必须非常谨慎**。本项目选择最保守路径：返回 partial，交给上层或用户决定是否继续。
+
+### 4.4 畸形帧：不要把解析失败当成可恢复文本
+
+#### `half-sse-frame`
+
+服务端仿真：写入半截 SSE 数据帧后立即销毁 socket。
+
+```typescript
+if (scenario === "half-sse-frame") {
+  writeRaw(reply, "data: {\"broken\":");
+  destroySse(reply);
+  return;
+}
+```
+
+SDK/Runner 暴露：不同 SDK 版本可能表现不同。有的抛解析或连接错误；有的可能结束为没有任何可用文本。
+
+客户端策略：策略对这两种表面都做显式防御。
+
+| SDK 表面 | 策略动作 | 结果 |
+|---|---|---|
+| 抛错 | `blocked_malformed_stream` | `safe_failure` |
+| 返回空文本 | `blocked_malformed_empty_stream` | `safe_failure` |
+
+| 字段 | 值 |
+|---|---|
+| `problem.kind` | `malformed_stream` |
+| `result.status` | `safe_failure` |
+| `safe_to_retry_automatically` | `false` |
+
+这里的重点不是“再试一次也许能好”，而是畸形帧没有可验证的语义边界。实验选择安全失败，避免把解析器的偶然行为当成业务输出。
+
+### 4.5 挂起流和心跳流：当前靠 wall timeout 中止，再归类为空内容超时
+
+#### `silent-hang`
+
+服务端仿真：发送协议起始帧后不再发送内容，保持连接直到客户端关闭。
+
+```typescript
+if (scenario === "silent-hang") {
+  await waitForClientClose(reply);
+  return;
+}
+```
+
+SDK/Runner 暴露：真实运行时，底层请求会被 `AbortController` 中止。SDK 可能抛出包含 `aborted`/`timeout` 的错误，也可能结束为没有任何文本。
+
+客户端策略：当前实现只有 wall-clock abort：`runWithResilience` 为每次 attempt 设置 `setTimeout(() => controller.abort(), options.wallTimeoutMs)`。`idleTimeoutMs` 是 CLI 和 `RunOptions` 中的配置字段，但策略层尚未实现“每次有用内容到达就重置”的独立 idle timer。
+
+| SDK 表面 | 策略动作 | 报告 |
+|---|---|---|
+| 返回空文本 | `aborted_empty_hanging_stream` | `problem.kind=idle_timeout`, `status=aborted_content_idle_timeout` |
+| 抛 abort/timeout 错误 | 首 token 前错误路径，可有限重试；耗尽后 `aborted_idle_timeout` | `problem.kind=idle_timeout` |
+
+| 字段 | 值 |
+|---|---|
+| 当前中止机制 | `wallTimeoutMs` 驱动的 AbortSignal |
+| 当前未实现 | 真正的内容 idle timer |
+| `safe_to_retry_automatically` | 空文本报告为 `true`，表示上层可安全重放；并不表示当前策略已经在该分支内重试 |
+
+#### `heartbeat-only`
+
+服务端仿真：发送起始帧后只发送心跳。OpenAI 协议写 SSE 注释帧 `: heartbeat\n\n`，Anthropic 写 `ping` 事件。心跳循环 5 次后继续等待客户端关闭。
+
+```typescript
+if (scenario === "heartbeat-only") {
+  for (let index = 0; index < 5; index += 1) {
+    if (protocol === "anthropic") {
+      writeNamedEvent(reply, "ping", { type: "ping" });
+    } else {
+      writeRaw(reply, ": heartbeat\n\n");
+    }
+    await sleep(200);
+  }
+  await waitForClientClose(reply);
+  return;
+}
+```
+
+SDK/Runner 暴露：Runner 会看到事件但没有文本增量。最终仍由 wall timeout abort，或返回空文本。
+
+客户端策略：与 `silent-hang` 相同。心跳不被当作有用内容；空文本成功路径归类为 `aborted_content_idle_timeout`。
+
+| 字段 | 值 |
+|---|---|
+| `problem.kind` | `idle_timeout` |
+| `mitigation.actions` | `aborted_empty_hanging_stream` 或首 token 前重试路径 |
+| `result.status` | `aborted_content_idle_timeout` 或 `aborted_idle_timeout` |
+| 关键边界 | 当前不是严格 idle timer；是 wall timeout 后的空内容归类 |
+
+### 4.6 半截工具调用：宁可失败，也不执行
+
+#### `half-tool-json`
+
+服务端仿真：先按协议发送工具调用相关事件，再发送不完整参数 `{"city":"Par`，随后销毁 socket。
+
+| 协议 | 工具参数增量位置 |
+|---|---|
+| OpenAI Chat | `choices[0].delta.tool_calls[0].function.arguments` |
+| OpenAI Responses | `response.function_call_arguments.delta` |
+| Anthropic | `content_block_delta` + `input_json_delta.partial_json` |
+
+SDK/Runner 暴露：如果 SDK 抛错，Runner 尝试把已累积的 `partialToolJson` 附加到错误上。如果 SDK 没暴露部分工具参数，策略仍根据场景把它作为不可观测的工具 partial 处理。
+
+客户端策略：工具调用参数只有在完整 JSON 对象通过 `JSON.parse` 后才可被视为完整。不完整时直接安全失败，不执行、不 fallback、不普通重试。
+
+| SDK 表面 | 策略动作 | 结果 |
+|---|---|---|
+| `result.toolJson` 不完整 | `blocked_incomplete_tool_json` | `safe_failure` |
+| 错误带 `partialToolJson` | `blocked_incomplete_tool_json` | `safe_failure` |
+| 错误不带工具 partial，但场景是 `half-tool-json` | `blocked_unobservable_tool_partial` | `safe_failure` |
+
+| 字段 | 值 |
+|---|---|
+| `problem.kind` | `unsafe_partial_tool_call` |
+| `result.status` | `safe_failure` |
+| `safe_to_retry_automatically` | `false` |
+
+这是整套实验最重要的安全场景。外部分析中的多个 Agent 都强调：半截 tool call 一旦进入执行层，会污染状态、触发错误工具操作或导致下一轮上下文膨胀。本项目用最小实现验证这条底线。
+
+### 4.7 场景选择优先级
+
+`fault-provider` 按以下顺序选择场景：
+
+```text
+1. x-mock-scenario 请求头
 2. ?scenario=... 查询参数
 3. metadata.mock_scenario 请求体字段
-4. 默认值 normal                    （最低优先级）
+4. normal
 ```
 
-客户端通过请求体的 `metadata.mock_scenario` 字段传递场景名。Anthropic runner 额外通过 `x-mock-scenario` 请求头传递（因为 Anthropic SDK 不支持在 body 中设置 metadata）。
+OpenAI Chat 和 OpenAI Responses Runner 通过 body 的 `metadata.mock_scenario` 传递场景。Anthropic Runner 通过 `x-mock-scenario` 请求头传递，因为 Anthropic SDK 的 Messages API 请求体不使用同样的 metadata 字段。
 
 ---
 
-## 6. 弹性策略详解
+## 5. 弹性策略机制
 
-弹性策略由 `src/client/resilience/policy.ts` 中的 `runWithResilience` 函数实现，是整个项目的核心。
+### 5.1 当前实现的核心原则
 
-### 6.1 策略执行流程
-
-```
-开始
-  ↓
-┌─→ 创建 AbortController + 墙钟定时器
-│     ↓
-│   调用 SDK Runner
-│     ↓
-│   ┌─ 成功 ─────────────────────────┐
-│   │ 检查工具 JSON 完整性            │
-│   │ 检查空流（half-sse-frame）      │
-│   │ 检查空挂流（silent-hang）       │
-│   │ → 生成成功报告                   │
-│   └────────────────────────────────┘
-│   ┌─ 失败 ─────────────────────────┐
-│   │ 分类错误                        │
-│   │ 提取部分状态                     │
-│   │ 检查部分工具 JSON                │
-│   │ 检查 half-tool-json 场景        │
-│   │ 检查 half-sse-frame 场景        │
-│   │                                 │
-│   │ 有可见部分文本？                 │
-│   │   是 → 返回部分输出，抑制重试     │
-│   │   否 → 达到最大重试？            │
-│   │          是 → 返回耗尽报告        │
-│   │          否 → 计算退避，重试 ──→┘
-│   └────────────────────────────────┘
-```
-
-### 6.2 重试规则
-
-**核心原则：仅在无可见内容输出时重试。**
-
-- 429、529、503、500 及首内容前的网络错误：可重试
-- 已有可见部分文本后：默认不重试（抑制自动重试）
-- 不完整工具 JSON：永不重试，标记为安全失败
-- 达到 `maxAttempts` 上限：停止重试
-
-### 6.3 退避计算
-
-延迟选择优先级：
-
-1. `retry-after-ms` 头（毫秒）
-2. `retry-after` 头（秒或 HTTP 日期）
-3. 指数退避 + 抖动
-
-指数退避公式：
-
-```
-delay = min(initialDelayMs * 2^(attempt-1), maxBackoffMs) * random(1-jitter, 1+jitter)
-```
-
-默认参数：`initialDelayMs=100`, `maxBackoffMs=1000`, `jitterRatio=0.2`
-
-### 6.4 超时规则
-
-| 超时类型 | 参数 | 说明 |
-|---|---|---|
-| 空闲超时 | `--idle-timeout-ms` | 无有用内容增量到达时中止 |
-| 内容空闲超时 | 同上 | 心跳/ping 事件不重置空闲计时器 |
-| 墙钟超时 | `--wall-timeout-ms` | 整个运行的总时间上限，通过 AbortSignal 强制中止 |
-
-实现上，墙钟超时通过 `AbortController` + `setTimeout` 实现：
-
-```typescript
-const controller = new AbortController();
-const wallTimer = setTimeout(() => controller.abort(), options.wallTimeoutMs);
-```
-
-SDK Runner 接收 `AbortSignal`，在超时时中止底层请求。
-
-### 6.5 部分输出处理
-
-SDK Runner 在流式消费过程中捕获文本和工具 JSON。当流发生错误时，通过 `Object.assign(error, { partialText, partialEvents, partialToolJson })` 将部分状态附加到错误对象上。
-
-弹性策略从错误对象中提取部分状态：
-
-```typescript
-function extractPartialState(error: unknown): { text: string; toolJson?: string } {
-  const maybePartial = error as { partialText?: unknown; partialToolJson?: unknown };
-  return {
-    text: typeof maybePartial.partialText === "string" ? maybePartial.partialText : "",
-    toolJson: typeof maybePartial.partialToolJson === "string" ? maybePartial.partialToolJson : undefined
-  };
-}
-```
-
-**部分输出决策矩阵：**
-
-| 条件 | 结果 | 动作 |
-|---|---|---|
-| 有可见文本 + 流失败 | `partial_returned` | `tracked_partial_output`, `suppressed_retry_after_partial` |
-| 无可见文本 + 可重试错误 | 重试 | `retry_before_partial_output` |
-| 无可见文本 + 达到最大重试 | `exhausted` / `aborted_idle_timeout` | 记录最后一次错误 |
-| 不完整工具 JSON（可观测） | `safe_failure` | `blocked_incomplete_tool_json` |
-| half-tool-json 场景 + 不可观测 | `safe_failure` | `blocked_unobservable_tool_partial` |
-| half-sse-frame 场景 | `safe_failure` | `blocked_malformed_stream` / `blocked_malformed_empty_stream` |
-| silent-hang / heartbeat-only + 空流 | `aborted_content_idle_timeout` | `aborted_empty_hanging_stream` |
-
-### 6.6 错误分类
-
-`classifyError` 函数将 SDK 抛出的错误映射到 `ProblemKind`：
-
-```typescript
-// 优先检查 HTTP 状态码
-status === 429            → rate_limited
-status === 529 || 503     → overloaded
-status >= 500             → server_error
-
-// 其次检查错误消息关键词
-"timeout" | "aborted"     → idle_timeout
-"terminated" | "socket" |
-"connection" | "destroyed"→ stream_interrupted
-"parse" | "json" | "sse"  → malformed_stream
-
-// 兜底
-                          → sdk_error
-```
-
-### 6.7 工具 JSON 安全检查
-
-使用 `JSON.parse` 验证工具调用 JSON 是否完整：
-
-```typescript
-function isCompleteJsonObject(value: string): boolean {
-  try { JSON.parse(value); return true; } catch { return false; }
-}
-```
-
-如果不完整，无论是否有部分文本，都标记为 `unsafe_partial_tool_call` 并阻止执行。
-
----
-
-## 7. CLI 命令参考
-
-### 7.1 run — 运行单个场景
-
-```bash
-npm run resilience-runner -- <protocol> <query> [scenarioArg] [wallTimeoutMsArg] [options]
-```
-
-**位置参数：**
-
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `protocol` | 是 | `openai-chat` / `openai-responses` / `anthropic` |
-| `query` | 是 | 用户查询文本 |
-| `scenarioArg` | 否 | 场景名，如 `midstream-close` |
-| `wallTimeoutMsArg` | 否 | 墙钟超时毫秒数 |
-
-**选项：**
-
-| 选项 | 默认值 | 说明 |
-|---|---|---|
-| `--stream` / `--no-stream` | `--stream` | 流式/非流式模式 |
-| `--scenario <name>` | `normal` | 场景名 |
-| `--model <name>` | `mock-model` | 模型名 |
-| `--base-url <url>` | `http://127.0.0.1:3000/v1` | 提供者地址 |
-| `--max-attempts <n>` | `2` | 最大重试次数 |
-| `--idle-timeout-ms <n>` | `1000` | 空闲超时 |
-| `--wall-timeout-ms <n>` | `5000` | 墙钟超时 |
-| `--fallback-model <name>` | 无 | 备用模型（预留接口） |
-| `--report-dir <path>` | `reports` | 报告输出目录 |
-| `--json` | `false` | 输出 JSON 格式报告 |
-
-### 7.2 scenarios — 列出场景
-
-```bash
-npm run resilience:scenarios
-```
-
-### 7.3 smoke — 运行冒烟矩阵
-
-```bash
-npm run resilience:smoke [--base-url <url>] [--report-dir <path>]
-```
-
-冒烟矩阵固定运行 18 个用例（3 协议 × 6 场景），使用紧凑的超时参数：
-
-```
-maxAttempts: 2, idleTimeoutMs: 500, wallTimeoutMs: 2000
-```
-
-### 7.4 兼容别名
-
-| 别名 | 等价命令 |
+| 原则 | 代码中的体现 |
 |---|---|
-| `npm run server` | `npm run fault-provider` |
-| `npm run client` | `npm run resilience-runner --` |
-| `npm run scenarios` | `npm run resilience:scenarios` |
-| `npm run smoke` | `npm run resilience:smoke` |
+| SDK 内置重试关闭 | SDK client 使用 `maxRetries: 0` |
+| 首 token 前可以有限重试 | 无 `lastText` 且未达到 `maxAttempts` 时记录 `retry_before_partial_output` |
+| partial text 后不自动重试 | 有 `partialText` 时返回 `partial_returned` |
+| 工具 JSON 不完整即安全失败 | `isCompleteJsonObject()` 失败时返回 `unsafe_partial_tool_call` |
+| 场景特定风险显式兜底 | `half-sse-frame`、`half-tool-json`、`silent-hang` 有专门分支 |
+| 每次 attempt 有总时限 | `wallTimeoutMs` 触发 `AbortController.abort()` |
+
+### 5.2 策略流程
+
+```text
+for attempt in 1..maxAttempts
+  创建 AbortController + wall timer
+  调用 SDK Runner
+
+  成功:
+    如果 toolJson 不完整 -> safe_failure
+    如果 half-sse-frame 空文本 -> safe_failure
+    如果 silent/heartbeat 空文本 -> aborted_content_idle_timeout
+    否则 -> completed / completed_slow / recovered
+
+  失败:
+    classifyError(error)
+    extractPartialState(error)
+    如果 partialToolJson 不完整 -> safe_failure
+    如果 half-tool-json 且工具 partial 不可观测 -> safe_failure
+    如果 half-sse-frame -> safe_failure
+    如果已有 partial text -> partial_returned，抑制重试
+    如果还有 attempt -> backoff+jitter 后重试
+    否则 -> exhausted 或 aborted_idle_timeout
+```
+
+### 5.3 错误分类
+
+`src/client/resilience/classify.ts` 先看 HTTP status，再看错误消息关键词。
+
+| 输入信号 | `ProblemKind` |
+|---|---|
+| `status === 429` | `rate_limited` |
+| `status === 529 || status === 503` | `overloaded` |
+| `status >= 500` | `server_error` |
+| message 包含 `timeout` 或 `aborted` | `idle_timeout` |
+| message 包含 `terminated`、`socket`、`connection`、`destroyed` | `stream_interrupted` |
+| message 包含 `parse`、`json`、`sse` | `malformed_stream` |
+| 兜底 | `sdk_error` |
+
+### 5.4 重试和退避
+
+当前策略只在“无可见部分输出”时重试。退避使用 `computeBackoffMs()`：
+
+```text
+delay = min(initialDelayMs * 2^(attempt - 1), maxBackoffMs) * random(1 - jitter, 1 + jitter)
+```
+
+默认参数：
+
+| 参数 | 值 |
+|---|---|
+| `initialDelayMs` | `100` |
+| `maxBackoffMs` | `1000` |
+| `jitterRatio` | `0.2` |
+
+`src/shared/retry.ts` 已提供 `parseRetryAfterMs()`，可解析 `retry-after-ms`、秒数形式的 `retry-after` 和 HTTP date。但当前 `runWithResilience` 没有把 SDK 错误 headers 接到该函数上，因此文档不能声称策略已经优先尊重 `retry-after`。这也是后续最直接的增强点之一。
+
+### 5.5 超时语义
+
+| 配置/状态 | 当前含义 |
+|---|---|
+| `--wall-timeout-ms` | 每次 attempt 的总时间上限；到期后 abort SDK 请求 |
+| `--idle-timeout-ms` | CLI 和类型中已存在，但当前策略未实现独立 idle timer |
+| `aborted_content_idle_timeout` | SDK/Runner 返回空文本后，策略根据场景把它归类为空内容挂起 |
+| `aborted_idle_timeout` | SDK 抛出 abort/timeout，重试耗尽后的状态 |
+
+因此，本文不再把 `heartbeat-only` 描述为“心跳不会重置 idle timer”。更准确的说法是：心跳不产生文本，最终在当前实现里会走 wall timeout abort 或空文本归类；真正的内容 idle timer 仍是待实现能力。
 
 ---
 
-## 8. 报告格式
+## 6. 报告怎么看
 
-### 8.1 JSON 报告
+每次运行会生成 `reports/<request_id>.json`。读报告时优先看四个字段：
 
-每次运行写入 `reports/<request_id>.json`：
+| 字段 | 作用 |
+|---|---|
+| `problem.kind` | 客户端把故障归类为什么 |
+| `problem.after_partial_output` | 故障是否发生在已有可见输出之后 |
+| `mitigation.actions` | 策略实际采取了哪些动作 |
+| `result.status` | 运行最终状态 |
+| `result.safe_to_retry_automatically` | 上层是否可安全重放请求，不等于当前策略已经重试 |
+
+示例：
 
 ```json
 {
-  "request_id": "mock_1781883765603_693ec705b23c78",
-  "protocol": "anthropic",
-  "mode": "stream",
-  "scenario": "half-tool-json",
+  "scenario": "midstream-close",
   "problem": {
-    "kind": "unsafe_partial_tool_call",
-    "after_partial_output": false,
-    "received_chars": 0,
-    "message": "Connection error."
+    "kind": "stream_interrupted",
+    "after_partial_output": true,
+    "received_chars": 16
   },
   "mitigation": {
-    "actions": ["blocked_unobservable_tool_partial"],
-    "retry_attempts": 0,
-    "fallback_used": false,
-    "circuit_opened": false
+    "actions": ["tracked_partial_output", "suppressed_retry_after_partial"],
+    "retry_attempts": 0
   },
   "result": {
-    "status": "safe_failure",
+    "status": "partial_returned",
     "safe_to_retry_automatically": false
-  },
-  "timing": {
-    "started_at": "2026-06-19T15:42:45.599Z",
-    "ended_at": "2026-06-19T15:42:45.603Z",
-    "duration_ms": 4
   }
 }
 ```
 
-**字段说明：**
-
-| 字段 | 说明 |
-|---|---|
-| `request_id` | 自动生成的唯一 ID，格式 `mock_<timestamp>_<hex>` |
-| `protocol` | 使用的协议 |
-| `mode` | `stream` 或 `json` |
-| `scenario` | 场景名 |
-| `output_text` | 接收到的文本（可能不存在） |
-| `problem.kind` | 问题分类 |
-| `problem.after_partial_output` | 故障是否发生在部分输出之后 |
-| `problem.received_chars` | 接收到的字符数 |
-| `problem.message` | 错误消息 |
-| `mitigation.actions` | 缓解动作列表 |
-| `mitigation.retry_attempts` | 重试次数 |
-| `mitigation.fallback_used` | 是否使用了备用模型 |
-| `mitigation.circuit_opened` | 是否触发了熔断器 |
-| `result.status` | 运行状态 |
-| `result.safe_to_retry_automatically` | 是否可安全自动重试 |
-| `timing` | 时间信息 |
-
-### 8.2 冒烟汇总报告
-
-冒烟矩阵额外生成 `reports/smoke-<timestamp>.md`：
-
-```markdown
-# Smoke Summary
-
-| Protocol | Scenario | Problem | Mitigation | Result |
-|---|---|---|---|---|
-| openai-chat | normal | none | tracked_output | completed |
-| openai-chat | rate-limit-retry-after | rate_limited | retry_before_partial_output | exhausted |
-| openai-chat | midstream-close | stream_interrupted | tracked_partial_output, suppressed_retry_after_partial | partial_returned |
-| openai-chat | half-sse-frame | malformed_stream | blocked_malformed_stream | safe_failure |
-| openai-chat | silent-hang | idle_timeout | aborted_empty_hanging_stream | aborted_content_idle_timeout |
-| openai-chat | half-tool-json | unsafe_partial_tool_call | blocked_unobservable_tool_partial | safe_failure |
-| openai-responses | normal | none | tracked_output | completed |
-| ... | ... | ... | ... | ... |
-| anthropic | half-tool-json | unsafe_partial_tool_call | blocked_unobservable_tool_partial | safe_failure |
-```
-
-### 8.3 人类可读输出
-
-默认输出格式：
-
-```
-Protocol: anthropic
-Mode: stream
-Scenario: midstream-close
-
-Text received:
-Hello, t
-
-Result:
-status=partial_returned
-problem=stream_interrupted
-partial=true
-received_chars=8
-mitigations=tracked_partial_output,suppressed_retry_after_partial
-retry_attempts=0
-```
-
-使用 `--json` 标志可输出结构化 JSON 报告。
+冒烟矩阵会额外生成 `reports/smoke-<timestamp>.md`。当前矩阵固定跑 18 个用例：3 个协议乘以 6 个核心场景（`normal`、`rate-limit-retry-after`、`midstream-close`、`half-sse-frame`、`silent-hang`、`half-tool-json`）。`slow`、`overloaded-retry-after`、`server-error`、`heartbeat-only`、`flood` 可通过单场景命令运行。
 
 ---
 
-## 9. 协议适配器
+## 7. 与完整 Streaming Agent 自保机制的关系
 
-协议适配器位于 `src/server/adapters/`，负责将场景引擎的指令转换为各协议的响应格式。适配器只做格式转换，不含任何场景逻辑。
+`D:\coding\creative\hello-olleh\docs\streaming-agent-resilience-analysis.md` 对 Claude Code、Codex、Gemini CLI、OpenCode、Hermes Agent、Nanobot 的分析给出了一套更完整的生产级自保模型。Stream Resilience Lab 当前只覆盖其中的核心故障面，而不是完整 Agent runtime。
 
-### 9.1 OpenAI Chat Completions (`openaiChat.ts`)
+### 7.1 已落地的机制
 
-| 函数 | 用途 |
+| 外部分析中的机制 | 当前项目状态 |
 |---|---|
-| `makeOpenAIChatCompletion` | 非流式完整响应（`object: "chat.completion"`） |
-| `makeOpenAIChatRoleDelta` | 流式首帧，声明 `role: "assistant"` |
-| `makeOpenAIChatDelta` | 流式文本增量（`choices[0].delta.content`） |
-| `makeOpenAIChatDoneDelta` | 流式终止帧（`finish_reason: "stop"`） |
-| `makeOpenAIChatToolDelta` | 工具调用增量（`tool_calls[0].function.arguments`） |
+| 错误分类：429、529、5xx、timeout、断流、畸形流 | 已落地 |
+| 最大重试次数 | 已落地 |
+| 指数退避 + jitter | 已落地 |
+| 首 token 前失败可重试 | 已落地 |
+| partial output 后谨慎处理 | 已落地，选择抑制自动重试 |
+| 半截 tool call 不执行 | 已落地 |
+| AbortSignal 贯穿 SDK 请求 | 已落地 |
+| 结构化报告可审计 | 已落地 |
 
-流式格式使用标准 SSE `data:` 帧，终止帧后发送 `data: [DONE]`。
+### 7.2 部分具备但还不完整
 
-### 9.2 OpenAI Responses (`openaiResponses.ts`)
+| 机制 | 当前状态 | 建议补强 |
+|---|---|---|
+| `retry-after` 优先 | 有解析工具，策略未接入 SDK headers | 在错误归一化层提取 headers，优先使用 server hint |
+| idle timeout | 有 CLI 参数，策略未实现独立计时器 | 在 Runner 或 policy 中按“有用内容增量”重置 timer |
+| provider 错误结构化 | 目前靠 status 和 message 分类 | 引入内部 `NormalizedProviderError` |
+| slow/hang 可观测状态 | 报告可见，等待过程中无 heartbeat | 长等待时输出 waiting/retry heartbeat |
 
-| 函数 | 用途 |
-|---|---|
-| `makeOpenAIResponse` | 非流式完整响应（`object: "response"`） |
-| `makeOpenAIResponseCreated` | 流式起始事件 `response.created` |
-| `makeOpenAIResponseTextDelta` | 文本增量事件 `response.output_text.delta` |
-| `makeOpenAIResponseCompleted` | 完成事件 `response.completed` |
-| `makeOpenAIResponseFunctionDelta` | 函数调用增量 `response.function_call_arguments.delta` |
+### 7.3 未实现，适合作为后续演进
 
-流式格式使用命名 SSE 事件（`event:` + `data:`），无 `[DONE]` 终止标记。
+| 机制 | 为什么重要 | 参考经验 |
+|---|---|---|
+| bounded stream queue | 防止 UI/SSE consumer 慢导致本地事件无限堆积 | Codex bounded channel |
+| consumer drop cancellation | 用户关闭消费端后停止上游 stream | Codex stream cancellation |
+| foreground/background 请求分级 | 过载时保护用户正在等的主请求，丢弃后台摘要/标题等低优先级任务 | Claude Code 529 分层 |
+| fallback model/provider | 当前 provider 持续失败时绕开故障点 | Claude Code、Nanobot |
+| circuit breaker | 避免每一轮都先撞一个已知失败的 primary provider | Nanobot |
+| provider/key 跨会话 cooldown | 多会话共享同一 key 时避免 retry storm | Hermes Agent Nous guard |
+| per-session lock | 防止同一 session 多个 turn 并发污染历史 | Nanobot |
+| context compaction | context overflow 不是 transient error，不能普通重试 | OpenCode、Codex |
+| max turns / loop detection | 服务异常时更容易诱发 agent 行为循环 | Gemini CLI、OpenCode |
 
-### 9.3 Anthropic Messages (`anthropicMessages.ts`)
-
-| 函数 | 用途 |
-|---|---|
-| `makeAnthropicMessage` | 非流式完整响应（`type: "message"`） |
-| `makeAnthropicMessageStart` | 流式起始事件 `message_start` |
-| `makeAnthropicContentBlockStart` | 文本块开始 `content_block_start` |
-| `makeAnthropicToolUseBlockStart` | 工具使用块开始 |
-| `makeAnthropicTextDelta` | 文本增量 `content_block_delta` + `text_delta` |
-| `makeAnthropicToolJsonDelta` | 工具 JSON 增量 `input_json_delta` |
-| `makeAnthropicStop` | 终止事件序列（`content_block_stop` → `message_delta` → `message_stop`） |
-
-流式格式使用命名 SSE 事件，无 `[DONE]`。Anthropic 使用 `ping` 事件作为心跳。
+这部分不应写成当前能力。它们是下一阶段把实验工具升级成生产 Agent runtime 时的设计清单。
 
 ---
 
-## 10. SDK Runner
+## 8. 快速使用
 
-SDK Runner 位于 `src/client/sdk/`，每个 Runner 封装一个官方 SDK 调用。
-
-### 10.1 共享接口
-
-```typescript
-interface SdkRunInput {
-  baseUrl: string;
-  model: string;
-  query: string;
-  stream: boolean;
-  scenario: ScenarioName;
-  signal?: AbortSignal;
-}
-
-interface SdkRunResult {
-  text: string;
-  events: string[];
-  toolJson?: string;
-}
-```
-
-### 10.2 三个 Runner 的共同模式
-
-1. 创建 SDK 客户端实例，设置 `maxRetries: 0`（禁用 SDK 内置重试，由弹性策略统一管理）
-2. 根据 `stream` 标志选择流式或非流式 API
-3. 流式消费时累积 `text` 和 `toolJson`
-4. 捕获流错误时，将部分状态附加到错误对象上再重新抛出
-
-### 10.3 各 Runner 的差异
-
-| 特性 | openaiChatRunner | openaiResponsesRunner | anthropicMessagesRunner |
-|---|---|---|---|
-| SDK 包 | `openai` | `openai` | `@anthropic-ai/sdk` |
-| 场景传递 | body `metadata.mock_scenario` | body `metadata.mock_scenario` | 请求头 `x-mock-scenario` |
-| baseURL 处理 | 直接使用 | 直接使用 | 去除 `/v1` 后缀（SDK 自动追加） |
-| 文本增量字段 | `delta.content` | `response.output_text.delta` | `content_block_delta` + `text_delta` |
-| 工具 JSON 字段 | `tool_calls[0].function.arguments` | `response.function_call_arguments.delta` | `input_json_delta.partial_json` |
-| 非流式文本提取 | `choices[0].message.content` | `response.output_text` | `content` 数组过滤 `text` 类型块 |
-
-### 10.4 部分状态附加
-
-所有 Runner 在 catch 块中执行相同的附加逻辑：
-
-```typescript
-function attachPartialState(error: unknown, text: string, events: string[], toolJson: string): void {
-  if (typeof error === "object" && error !== null) {
-    Object.assign(error, {
-      partialText: text,
-      partialEvents: events,
-      partialToolJson: toolJson || undefined
-    });
-  }
-}
-```
-
-这使得弹性策略可以在错误对象上读取到流中断前已经接收到的内容。
-
----
-
-## 11. 测试体系
-
-### 11.1 测试框架
-
-使用 Vitest，配置于 `vitest.config.ts`：
-
-```typescript
-export default defineConfig({
-  test: {
-    environment: "node",
-    include: ["tests/**/*.test.ts"],
-    testTimeout: 10_000
-  }
-});
-```
-
-### 11.2 测试文件结构
-
-测试目录与源码目录镜像对应：
-
-```
-tests/
-├── shared/
-│   ├── types.test.ts        — 类型编译时验证
-│   ├── scenarios.test.ts     — 场景目录完整性
-│   └── retry.test.ts         — retry-after 解析和退避计算
-├── server/
-│   ├── adapters.test.ts      — 协议适配器输出格式
-│   └── server.test.ts        — 服务端集成测试
-└── client/
-    ├── cli.test.ts           — CLI 格式化和冒烟用例
-    ├── reports.test.ts       — 报告写入
-    ├── resilience.test.ts    — 弹性策略核心逻辑
-    └── sdkRunners.test.ts    — SDK Runner 集成测试
-```
-
-### 11.3 关键测试覆盖
-
-**重试工具测试 (`retry.test.ts`)：**
-- `retry-after-ms` 头优先于 `retry-after`
-- 秒级和 HTTP 日期格式的 `retry-after` 解析
-- 畸形值的拒绝处理
-- 退避抖动边界的确定性验证
-
-**弹性策略测试 (`resilience.test.ts`)：**
-- HTTP 状态码分类（429/529/500）
-- 首内容前重试后恢复
-- 不完整工具 JSON 标记为安全失败
-- 流错误附加的部分文本保留
-- 不可观测的部分工具 JSON 安全处理
-- 畸形 SSE 流安全失败
-- 空闲挂起流的内容空闲中止
-
-**服务端测试 (`server.test.ts`)：**
-- 非流式 OpenAI Chat Completions
-- 速率限制场景的 429 + retry-after
-- Anthropic 正常 JSON 响应
-
-**SDK Runner 测试 (`sdkRunners.test.ts`)：**
-- 三个协议的正常流式消费
-- 使用真实 Fastify 实例的集成测试
-
-### 11.4 运行测试
+启动服务：
 
 ```bash
-# 全部测试
+npm install
+npm run fault-provider
+```
+
+运行单个场景：
+
+```bash
+npm run resilience-runner -- openai-chat "hello" midstream-close 3000
+npm run resilience-runner -- openai-responses "hello" rate-limit-retry-after 3000
+npm run resilience-runner -- anthropic "hello" half-tool-json 3000
+```
+
+列出场景和运行冒烟矩阵：
+
+```bash
+npm run resilience:scenarios
+npm run resilience:smoke
+```
+
+常用选项：
+
+| 选项 | 默认值 | 说明 |
+|---|---|---|
+| `--stream` / `--no-stream` | `--stream` | 流式或非流式 |
+| `--scenario <name>` | `normal` | 场景名 |
+| `--max-attempts <n>` | `2` | 最大 attempt 数 |
+| `--wall-timeout-ms <n>` | `5000` | 每次 attempt 的总超时 |
+| `--idle-timeout-ms <n>` | `1000` | 当前保留配置，尚未驱动独立 idle timer |
+| `--json` | `false` | 终端输出 JSON 报告 |
+
+---
+
+## 9. 开发与验证
+
+### 9.1 关键文件
+
+| 文件 | 职责 |
+|---|---|
+| `src/shared/scenarios.ts` | 场景目录和预期问题 |
+| `src/server/scenarioEngine.ts` | 服务端故障行为编排 |
+| `src/server/adapters/` | 三种协议的响应格式转换 |
+| `src/server/sse.ts` | SSE 写入、结束和 socket 销毁 |
+| `src/client/sdk/*.ts` | 官方 SDK 调用、流式消费、partial state 附加 |
+| `src/client/resilience/classify.ts` | SDK 错误归类 |
+| `src/client/resilience/policy.ts` | 重试、partial output、工具 JSON 和报告决策 |
+| `src/shared/retry.ts` | retry-after 解析工具和 backoff+jitter |
+
+### 9.2 添加新故障场景
+
+1. 在 `src/shared/types.ts` 添加 `ScenarioName`。
+2. 在 `src/shared/scenarios.ts` 添加场景定义和 `expectedProblem`。
+3. 在 `src/server/scenarioEngine.ts` 添加服务端仿真行为。
+4. 如需特殊客户端保护，在 `src/client/resilience/policy.ts` 添加明确分支。
+5. 添加单元或集成测试。
+6. 如果属于核心场景，再加入 `src/client/cli.ts` 的 `smokeCases`。
+
+### 9.3 验证命令
+
+```bash
 npm test
-
-# 监视模式
-npm run test:watch
-
-# 类型检查
 npm run typecheck
+```
 
-# 流式行为变更时额外运行
+涉及流式故障行为时，再运行：
+
+```bash
 npm run resilience:smoke
 ```
 
 ---
 
-## 12. 项目结构与模块职责
+## 10. 常见问题
 
-```
-stream-resilience-lab/
-├── src/
-│   ├── shared/                    # 共享层
-│   │   ├── types.ts               # 所有共享类型定义
-│   │   ├── scenarios.ts           # 场景目录和选择逻辑
-│   │   └── retry.ts               # retry-after 解析和退避计算
-│   │
-│   ├── server/                    # fault-provider 服务端
-│   │   ├── index.ts               # 入口，读取 PORT/HOST 环境变量
-│   │   ├── server.ts              # Fastify 应用和路由定义
-│   │   ├── scenarioEngine.ts      # 场景引擎（核心）
-│   │   ├── sse.ts                 # 底层 SSE 写入和连接控制
-│   │   └── adapters/              # 协议适配器
-│   │       ├── openaiChat.ts
-│   │       ├── openaiResponses.ts
-│   │       └── anthropicMessages.ts
-│   │
-│   └── client/                    # resilience-runner 客户端
-│       ├── cli.ts                 # CLI 入口（commander）
-│       ├── reports.ts             # JSON 和 Markdown 报告写入
-│       ├── resilience/
-│       │   ├── policy.ts          # 弹性策略（核心）
-│       │   └── classify.ts        # 错误分类
-│       └── sdk/
-│           ├── types.ts           # SDK Runner 共享接口
-│           ├── openaiChatRunner.ts
-│           ├── openaiResponsesRunner.ts
-│           └── anthropicMessagesRunner.ts
-│
-├── tests/                         # 测试目录（镜像 src 结构）
-├── docs/                          # 文档
-│   ├── assets/                    # 图片资源
-│   └── superpowers/               # 设计和计划文档
-│       ├── specs/
-│       └── plans/
-├── reports/                       # 生成的报告（git 忽略）
-├── package.json
-├── tsconfig.json
-└── vitest.config.ts
-```
+### 为什么 `rate-limit-retry-after` 的冒烟结果通常是 `exhausted`？
 
-### 12.1 模块职责边界
+Mock 服务端对该场景每次都返回 429。默认 `maxAttempts=2` 时，第一次失败后重试一次，第二次仍失败，所以最终是 `exhausted`。真实服务如果在重试后恢复，报告可以是 `recovered`。
 
-| 模块 | 职责 | 不做的事 |
-|---|---|---|
-| `adapters/` | 协议格式转换 | 不含场景逻辑 |
-| `scenarioEngine` | 场景行为编排 | 不做格式转换 |
-| `sse.ts` | 底层 SSE 写入 | 不理解协议语义 |
-| `sdk/*.ts` | SDK 调用和流消费 | 不做重试或超时决策 |
-| `resilience/policy` | 重试、超时、部分输出决策 | 不直接调用 SDK |
-| `resilience/classify` | 错误分类 | 不做策略决策 |
-| `reports.ts` | 报告文件写入 | 不做报告生成 |
-| `cli.ts` | 命令解析和编排 | 不含业务逻辑 |
+### 服务端发了 `retry-after`，客户端是否已经按它等待？
 
----
+还没有。`src/shared/retry.ts` 已有 `parseRetryAfterMs()`，但 `runWithResilience` 当前只使用本地 backoff+jitter。文档明确保留这个边界，避免把待实现能力写成现状。
 
-## 13. 技术栈
+### `--idle-timeout-ms` 当前是否真的生效？
 
-| 技术 | 版本 | 用途 |
-|---|---|---|
-| TypeScript | ^5.9.3 | 主语言，严格模式 |
-| Node.js | ES2022 target | 运行时 |
-| Fastify | ^5.6.2 | HTTP 服务端框架 |
-| OpenAI SDK | ^6.10.0 | OpenAI Chat & Responses 客户端 |
-| Anthropic SDK | ^0.65.0 | Anthropic Messages 客户端 |
-| Commander | ^14.0.2 | CLI 参数解析 |
-| tsx | ^4.20.6 | TypeScript 直接执行 |
-| concurrently | ^9.2.1 | 并发启动多进程 |
-| undici | ^7.16.0 | HTTP 客户端（SDK 依赖） |
-| Vitest | ^4.0.13 | 测试框架 |
-| @types/node | ^24.10.2 | Node.js 类型定义 |
+当前没有独立 idle timer。每个 attempt 的实际中止由 `--wall-timeout-ms` 驱动。`silent-hang` 和 `heartbeat-only` 的空内容结果会被归类为 `idle_timeout` / `aborted_content_idle_timeout`，但这不是严格的“内容增量 idle timer”实现。
 
-**TypeScript 配置要点：**
-- `module: NodeNext` — 使用 Node.js 原生 ESM
-- `strict: true` — 严格类型检查
-- `target: ES2022` — 现代 JS 特性
-- 导入路径必须带 `.js` 扩展名（ESM 要求）
+### 为什么 partial text 后不自动重试？
 
----
+因为用户或上层已经可能看到了部分输出。直接重试会重复输出，fallback 到另一个模型还可能产生不一致内容。当前策略选择返回 partial，并把 `safe_to_retry_automatically` 设为 `false`。
 
-## 14. 设计原则与最佳实践
+### 为什么半截工具 JSON 不重试？
 
-### 14.1 核心设计原则
+工具调用是副作用边界。只要工具参数不是完整 JSON，就不能执行，也不能当成普通网络错误重试。策略会返回 `unsafe_partial_tool_call` 和 `safe_failure`。
 
-1. **可见性优先**：弹性动作必须在日志和报告中可见，不做隐藏重试
-2. **安全第一**：不完整的工具 JSON 永不执行，宁可安全失败
-3. **部分输出保护**：已有可见内容后抑制自动重试，避免重复输出
-4. **协议隔离**：协议特定代码在适配器或 Runner 中，跨切面行为在共享层
-5. **确定性优先**：默认使用确定性文本和时序，便于稳定测试
+### 为什么 Anthropic Runner 的 baseURL 要去掉 `/v1`？
 
-### 14.2 编码规范
-
-- **语言**：TypeScript ESM，严格类型
-- **缩进**：2 空格
-- **函数命名**：descriptive camelCase
-- **类型命名**：PascalCase
-- **场景命名**：kebab-case（如 `midstream-close`）
-- **模块设计**：单一职责，聚焦模块
-- **导入路径**：必须带 `.js` 扩展名
-
-### 14.3 提交规范
-
-使用简洁的约定式提交信息：
-
-```
-feat: add ...
-fix: ...
-docs: ...
-chore: ...
-```
-
-### 14.4 安全提示
-
-- 不要添加真实 API Key — SDK 使用 mock key
-- 不要提交 `reports/` 目录 — 已在 `.gitignore` 中忽略
-- 不要提交本地环境文件
-
----
-
-## 15. 常见问题
-
-### Q: 为什么冒烟矩阵中 rate-limit-retry-after 的结果是 exhausted 而非 recovered？
-
-冒烟矩阵使用 `maxAttempts: 2`。第一次请求收到 429，客户端重试一次，但故障提供者对同一场景始终返回 429，因此第二次仍然失败，结果为 `exhausted`。在真实环境中，重试后服务端可能恢复，结果会是 `recovered`。
-
-### Q: 为什么 Anthropic Runner 的 baseURL 要去掉 `/v1`？
-
-Anthropic SDK 在内部会自动追加 `/v1` 路径。如果 baseURL 已经包含 `/v1`，会导致路径变成 `/v1/v1/messages`。`normalizeAnthropicBaseUrl` 函数负责去除末尾的 `/v1`。
-
-### Q: 为什么 SDK 设置 `maxRetries: 0`？
-
-弹性策略需要完全控制重试行为。如果 SDK 内部也做重试，会导致重试次数不可预测、部分输出状态丢失、超时行为混乱。禁用 SDK 内置重试后，所有重试决策都在弹性策略层可见。
-
-### Q: `half-tool-json` 场景中，如果 SDK 没有暴露部分 JSON 怎么办？
-
-弹性策略对此有专门处理：当场景为 `half-tool-json` 但错误对象中没有 `partialToolJson` 时，仍然标记为 `unsafe_partial_tool_call`，动作记录为 `blocked_unobservable_tool_partial`。这确保即使 SDK 隐藏了部分状态，客户端也不会错误地重试或视为普通错误。
-
-### Q: 如何添加新的故障场景？
-
-1. 在 `src/shared/types.ts` 的 `ScenarioName` 联合类型中添加新名称
-2. 在 `src/shared/scenarios.ts` 的 `scenarios` 数组中添加场景定义
-3. 在 `src/server/scenarioEngine.ts` 的 `sendStream` 或 `sendJson` 中添加场景行为
-4. 如需客户端特殊处理，在 `src/client/resilience/policy.ts` 中添加对应逻辑
-5. 在 `src/client/cli.ts` 的 `smokeCases` 中添加冒烟用例（可选）
-6. 添加对应的测试
-
-### Q: 如何在非默认端口运行服务端？
-
-通过环境变量设置：
-
-```bash
-PORT=4000 HOST=0.0.0.0 npm run fault-provider
-```
-
-客户端使用 `--base-url` 指定地址：
-
-```bash
-npm run resilience-runner -- openai-chat "hello" --base-url http://127.0.0.1:4000/v1
-```
+Anthropic SDK 会自行追加 `/v1`。如果传入的 baseURL 已包含 `/v1`，最终路径会变成 `/v1/v1/messages`，所以 Runner 会先规范化 baseURL。
