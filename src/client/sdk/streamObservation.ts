@@ -8,14 +8,18 @@ export function emitStreamObservation(
   totalReceivedChars: number,
   toolJson: string
 ): void {
-  input.onStreamEvent?.({
-    eventName,
-    chunkIndex,
-    textDeltaLength,
-    totalReceivedChars,
-    toolJsonStarted: toolJson.length > 0,
-    toolJsonComplete: isCompleteJson(toolJson)
-  });
+  try {
+    input.onStreamEvent?.({
+      eventName,
+      chunkIndex,
+      textDeltaLength,
+      totalReceivedChars,
+      toolJsonStarted: toolJson.length > 0,
+      toolJsonComplete: isCompleteJson(toolJson)
+    });
+  } catch {
+    // Debug observers must not alter SDK stream behavior.
+  }
 }
 
 export function isCompleteJson(value: string): boolean {

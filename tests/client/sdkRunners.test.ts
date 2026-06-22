@@ -58,6 +58,25 @@ describe("SDK runners", () => {
     expect(observations.some((observation) => observation.textDeltaLength > 0)).toBe(true);
   });
 
+  it("keeps OpenAI chat stream running when observation callback throws", async () => {
+    let observedEvents = 0;
+    const result = await runOpenAIChat({
+      baseUrl,
+      model: "mock-model",
+      query: "hello",
+      stream: true,
+      scenario: "normal",
+      signal: AbortSignal.timeout(5000),
+      onStreamEvent: () => {
+        observedEvents += 1;
+        throw new Error("debug observer failed");
+      }
+    });
+
+    expect(observedEvents).toBeGreaterThan(0);
+    expect(result.text).toContain("mock streaming response");
+  });
+
   it("runs OpenAI responses normal stream", async () => {
     const result = await runOpenAIResponses({
       baseUrl,
