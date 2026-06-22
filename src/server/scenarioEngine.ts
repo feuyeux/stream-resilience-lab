@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { resolveScenario } from "../shared/scenarios.js";
-import type { Protocol, ScenarioName } from "../shared/types.js";
+import { createTraceEvent } from "../shared/trace.js";
+import type { Mode, Protocol, ScenarioName } from "../shared/types.js";
 import {
   makeAnthropicContentBlockStart,
   makeAnthropicMessage,
@@ -25,8 +26,10 @@ import {
   makeOpenAIResponseTextDelta
 } from "./adapters/openaiResponses.js";
 import { destroySse, endSse, prepareSse, sleep, writeDataEvent, writeNamedEvent, writeRaw } from "./sse.js";
+import type { ServerTraceStore } from "./trace.js";
 
 const defaultText = "Hello, this is a mock streaming response.";
+let traceSequence = 0;
 
 interface BodyWithMockFields {
   model?: string;
@@ -34,15 +37,34 @@ interface BodyWithMockFields {
   input?: string;
   messages?: unknown[];
   max_tokens?: number;
-  metadata?: { mock_scenario?: string };
+  metadata?: {
+    mock_scenario?: string;
+    debug_session_id?: string;
+    debug_attempt_id?: string;
+    mock_request_id?: string;
+  };
 }
 
 interface QueryWithScenario {
   scenario?: string;
 }
 
+interface ServerTraceContext {
+  traceStore?: ServerTraceStore;
+  debugSessionId?: string;
+  attemptId?: string;
+  requestId?: string;
+  protocol: Protocol;
+  scenario: ScenarioName;
+  mode: Mode;
+}
+
 function firstHeaderValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+function present(value: string | undefined): string | undefined {
+  return value && value.trim() !== "" ? value : undefined;
 }
 
 function protocolPrefix(protocol: Protocol): string {
@@ -88,6 +110,48 @@ export function selectOutput(protocol: Protocol, request: FastifyRequest): strin
   return headerValue ?? requestBody(request)?.input ?? defaultText;
 }
 
+function buildTraceContext(
+  protocol: Protocol,
+  request: FastifyRequest,
+  traceStore: ServerTraceStore | undefined,
+  scenario: ScenarioName,
+  mode: Mode,
+): ServerTraceContext {
+  const metadata = requestBody(request)?.metadata;
+
+  return {
+    traceStore,
+    debugSessionId: present(firstHeaderValue(request.headers["x-debug-session-id"])) ?? present(metadata?.debug_session_id),
+    attemptId: present(firstHeaderValue(request.headers["x-debug-attempt-id"])) ?? present(metadata?.debug_attempt_id),
+    requestId: present(firstHeaderValue(request.headers["x-mock-request-id"])) ?? present(metadata?.mock_request_id),
+    protocol,
+    scenario,
+    mode,
+  };
+}
+
+function traceServer(context: ServerTraceContext | undefined, type: string, summary: string, data?: unknown): void {
+  if (!context?.debugSessionId || !context.traceStore) return;
+
+  context.traceStore.append(createTraceEvent({
+    sequence: (traceSequence += 1),
+    side: "server",
+    type,
+    debugSessionId: context.debugSessionId,
+    attemptId: context.attemptId,
+    requestId: context.requestId,
+    protocol: context.protocol,
+    scenario: context.scenario,
+    mode: context.mode,
+    summary,
+    data,
+  }));
+}
+
+function traceSseEvent(context: ServerTraceContext | undefined, eventName: string): void {
+  traceServer(context, "server.sse_event_sent", `event=${eventName}`, { eventName });
+}
+
 export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioName, model = "mock-model"): boolean {
   if (scenario === "rate-limit-retry-after") {
     reply.header("retry-after", "1").code(429).send({
@@ -127,24 +191,30 @@ export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioNa
   return false;
 }
 
-export function sendJson(protocol: Protocol, reply: FastifyReply, model: string, scenario: ScenarioName, text: string): void {
+export function sendJson(protocol: Protocol, reply: FastifyReply, model: string, scenario: ScenarioName, text: string, traceContext?: ServerTraceContext): void {
   if (maybeSendPreTokenError(reply, scenario, model)) return;
 
   const id = `${protocolPrefix(protocol)}_${Date.now()}`;
   if (protocol === "openai-chat") {
     reply.send(makeOpenAIChatCompletion(id, model, text));
+    traceServer(traceContext, "server.json_response_sent", "json response sent");
+    traceServer(traceContext, "server.response_completed", "response completed");
     return;
   }
 
   if (protocol === "openai-responses") {
     reply.send(makeOpenAIResponse(id, model, text));
+    traceServer(traceContext, "server.json_response_sent", "json response sent");
+    traceServer(traceContext, "server.response_completed", "response completed");
     return;
   }
 
   reply.send(makeAnthropicMessage(id, model, text));
+  traceServer(traceContext, "server.json_response_sent", "json response sent");
+  traceServer(traceContext, "server.response_completed", "response completed");
 }
 
-export async function sendStream(protocol: Protocol, reply: FastifyReply, model: string, scenario: ScenarioName, text: string): Promise<void> {
+export async function sendStream(protocol: Protocol, reply: FastifyReply, model: string, scenario: ScenarioName, text: string, traceContext?: ServerTraceContext): Promise<void> {
   if (maybeSendPreTokenError(reply, scenario, model)) return;
 
   const id = `${protocolPrefix(protocol)}_${Date.now()}`;
@@ -155,20 +225,26 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
   const delay = scenario === "slow" ? 150 : 5;
 
   prepareSse(reply);
+  traceServer(traceContext, "server.stream_opened", "stream opened");
 
   if (protocol === "openai-chat") {
     writeDataEvent(reply, makeOpenAIChatRoleDelta(id, model));
+    traceSseEvent(traceContext, "data");
   } else if (protocol === "openai-responses") {
     const created = makeOpenAIResponseCreated(id, model);
     writeNamedEvent(reply, created.event, created.data);
+    traceSseEvent(traceContext, created.event);
   } else {
     const start = makeAnthropicMessageStart(id, model);
     writeNamedEvent(reply, start.event, start.data);
+    traceSseEvent(traceContext, start.event);
     const blockStart = scenario === "half-tool-json" ? makeAnthropicToolUseBlockStart() : makeAnthropicContentBlockStart();
     writeNamedEvent(reply, blockStart.event, blockStart.data);
+    traceSseEvent(traceContext, blockStart.event);
   }
 
   if (scenario === "silent-hang") {
+    traceServer(traceContext, "server.stream_hung", `scenario=${scenario}`);
     await waitForClientClose(reply);
     return;
   }
@@ -177,17 +253,21 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
     for (let index = 0; index < 5; index += 1) {
       if (protocol === "anthropic") {
         writeNamedEvent(reply, "ping", { type: "ping" });
+        traceSseEvent(traceContext, "ping");
       } else {
         writeRaw(reply, ": heartbeat\n\n");
       }
       await sleep(200);
     }
+    traceServer(traceContext, "server.stream_hung", `scenario=${scenario}`);
     await waitForClientClose(reply);
     return;
   }
 
   if (scenario === "half-sse-frame") {
     writeRaw(reply, "data: {\"broken\":");
+    traceServer(traceContext, "server.malformed_frame_sent", "malformed frame sent");
+    traceServer(traceContext, "server.socket_destroyed", `reason=${scenario}`, { reason: scenario });
     destroySse(reply);
     return;
   }
@@ -195,14 +275,18 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
   if (scenario === "half-tool-json") {
     if (protocol === "openai-chat") {
       writeDataEvent(reply, makeOpenAIChatToolDelta(id, model, "{\"city\":\"Par"));
+      traceSseEvent(traceContext, "data");
     } else if (protocol === "openai-responses") {
       const event = makeOpenAIResponseFunctionDelta("{\"city\":\"Par");
       writeNamedEvent(reply, event.event, event.data);
+      traceSseEvent(traceContext, event.event);
     } else {
       const event = makeAnthropicToolJsonDelta("{\"city\":\"Par");
       writeNamedEvent(reply, event.event, event.data);
+      traceSseEvent(traceContext, event.event);
     }
 
+    traceServer(traceContext, "server.socket_destroyed", `reason=${scenario}`, { reason: scenario });
     destroySse(reply);
     return;
   }
@@ -212,15 +296,19 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
 
     if (protocol === "openai-chat") {
       writeDataEvent(reply, makeOpenAIChatDelta(id, model, chunk));
+      traceSseEvent(traceContext, "data");
     } else if (protocol === "openai-responses") {
       const event = makeOpenAIResponseTextDelta(`msg_${id}`, chunk);
       writeNamedEvent(reply, event.event, event.data);
+      traceSseEvent(traceContext, event.event);
     } else {
       const event = makeAnthropicTextDelta(chunk);
       writeNamedEvent(reply, event.event, event.data);
+      traceSseEvent(traceContext, event.event);
     }
 
     if ((scenario === "midstream-close" || scenario === "consumer-drop") && index === 1) {
+      traceServer(traceContext, "server.socket_destroyed", `reason=${scenario}`, { reason: scenario });
       destroySse(reply);
       return;
     }
@@ -228,35 +316,46 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
 
   if (protocol === "openai-chat") {
     writeDataEvent(reply, makeOpenAIChatDoneDelta(id, model));
+    traceSseEvent(traceContext, "data");
     writeDataEvent(reply, "[DONE]");
+    traceSseEvent(traceContext, "data");
   } else if (protocol === "openai-responses") {
     const completed = makeOpenAIResponseCompleted(id, model, text);
     writeNamedEvent(reply, completed.event, completed.data);
+    traceSseEvent(traceContext, completed.event);
   } else {
     for (const event of makeAnthropicStop(chunks.length)) {
       writeNamedEvent(reply, event.event, event.data);
+      traceSseEvent(traceContext, event.event);
     }
   }
 
+  traceServer(traceContext, "server.response_completed", "response completed");
   endSse(reply);
 }
 
 export async function handleScenario(
   protocol: Protocol,
   request: FastifyRequest,
-  reply: FastifyReply
+  reply: FastifyReply,
+  traceStore?: ServerTraceStore,
 ): Promise<void> {
   const scenario = selectScenario(request);
   const model = selectModel(request);
   const stream = selectStream(request);
+  const mode: Mode = stream ? "stream" : "json";
   const output = selectOutput(protocol, request);
+  const traceContext = buildTraceContext(protocol, request, traceStore, scenario, mode);
+
+  traceServer(traceContext, "server.request_received", `protocol=${protocol} scenario=${scenario} mode=${mode}`);
+  traceServer(traceContext, "server.scenario_selected", `scenario=${scenario}`);
 
   if (stream) {
-    await sendStream(protocol, reply, model, scenario, output);
+    await sendStream(protocol, reply, model, scenario, output, traceContext);
     return;
   }
 
-  sendJson(protocol, reply, model, scenario, output);
+  sendJson(protocol, reply, model, scenario, output, traceContext);
 }
 
 export function buildProtocolRequestId(protocol: Protocol): string {

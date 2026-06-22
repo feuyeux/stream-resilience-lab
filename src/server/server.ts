@@ -21,7 +21,7 @@ export function buildServer() {
   async function handle(protocol: Protocol, request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const scenario = (request.query as { scenario?: string } | undefined)?.scenario ?? "normal";
     request.log.info({ protocol, scenario }, "mock request");
-    await handleScenario(protocol, request, reply);
+    await handleScenario(protocol, request, reply, traceStore);
   }
 
   app.post("/v1/chat/completions", async (request, reply) => handle("openai-chat", request, reply));
