@@ -1,0 +1,12 @@
+{
+  "appId": "dev.stream-resilience-lab.debugger",
+  "productName": "Stream Resilience Debugger",
+  "files": [
+    "dist/**",
+    "src/**",
+    "package.json"
+  ],
+  "directories": {
+    "output": "dist/packages"
+  }
+}

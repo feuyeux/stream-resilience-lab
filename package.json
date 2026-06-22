@@ -15,20 +15,31 @@
     "smoke": "npm run resilience:smoke",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "desktop:dev": "concurrently -n renderer,electron \"vite --config vite.desktop.config.ts\" \"electron --import tsx src/desktop/main.ts --dev\"",
+    "desktop:build": "vite build --config vite.desktop.config.ts && tsc --noEmit",
+    "desktop": "npm run desktop:dev"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",
     "commander": "^14.0.2",
     "concurrently": "^9.2.1",
     "fastify": "^5.6.2",
+    "lucide-react": "^1.21.0",
     "openai": "^6.10.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "tsx": "^4.20.6",
     "undici": "^7.16.0"
   },
   "devDependencies": {
     "@types/node": "^24.10.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "electron": "^42.4.1",
     "typescript": "^5.9.3",
+    "vite": "^8.0.16",
     "vitest": "^4.0.13"
   }
 }
