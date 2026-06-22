@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { RunOptions, ScenarioName, StreamObservation } from "../../src/shared/types.js";
 
 describe("shared types", () => {
-  it("allows complete report-free run options and stream observation shapes", () => {
+  it("allows complete debug run options and stream observation shapes", () => {
     void ("normal" satisfies ScenarioName);
     const options = {
       protocol: "openai-chat",

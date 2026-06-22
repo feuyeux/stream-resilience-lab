@@ -18,7 +18,7 @@ function outcome(): RunOutcome {
 }
 
 describe("runDebugSmoke", () => {
-  it("builds report-free debug session options with scenario-specific smoke defaults", async () => {
+  it("builds debug session options with scenario-specific smoke defaults", async () => {
     const optionsSeen: RunOptions[] = [];
 
     const results = await runDebugSmoke(
@@ -77,7 +77,24 @@ describe("runDebugSmoke", () => {
         priority: "background"
       }
     ]);
-    expect(optionsSeen.flatMap((options) => Object.keys(options))).not.toContain("report" + "Dir");
-    expect(optionsSeen.flatMap((options) => Object.keys(options))).not.toContain("json");
+    const validOptionKeys = new Set([
+      "useCaseId",
+      "protocol",
+      "query",
+      "mode",
+      "scenario",
+      "model",
+      "baseUrl",
+      "maxAttempts",
+      "idleTimeoutMs",
+      "wallTimeoutMs",
+      "fallbackModel",
+      "priority",
+      "maxStreamEvents",
+      "sessionId",
+      "currentTurn",
+      "maxTurns"
+    ]);
+    expect(optionsSeen.flatMap((options) => Object.keys(options).filter((key) => !validOptionKeys.has(key)))).toEqual([]);
   });
 });

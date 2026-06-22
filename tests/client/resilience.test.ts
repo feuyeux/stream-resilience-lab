@@ -12,7 +12,7 @@ describe("resilience policy", () => {
   it("retries before partial output", async () => {
     let calls = 0;
     const logEvents: string[] = [];
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -44,8 +44,8 @@ describe("resilience policy", () => {
       }
     );
 
-    expect(report.result.status).toBe("recovered");
-    expect(report.mitigation.retry_attempts).toBe(1);
+    expect(outcome.result.status).toBe("recovered");
+    expect(outcome.mitigation.retry_attempts).toBe(1);
     expect(logEvents).toEqual([
       "run_started",
       "attempt_started",
@@ -58,7 +58,7 @@ describe("resilience policy", () => {
   });
 
   it("marks incomplete tool JSON as safe failure", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "anthropic",
         query: "hello",
@@ -74,13 +74,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("unsafe_partial_tool_call");
-    expect(report.result.status).toBe("safe_failure");
-    expect(report.mitigation.actions).toContain("blocked_incomplete_tool_json");
+    expect(outcome.problem.kind).toBe("unsafe_partial_tool_call");
+    expect(outcome.result.status).toBe("safe_failure");
+    expect(outcome.mitigation.actions).toContain("blocked_incomplete_tool_json");
   });
 
   it("preserves partial text attached to stream errors", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -100,14 +100,14 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.result.status).toBe("partial_returned");
-    expect(report.problem.after_partial_output).toBe(true);
-    expect(report.problem.received_chars).toBe(12);
-    expect(report.mitigation.actions).toContain("suppressed_retry_after_partial");
+    expect(outcome.result.status).toBe("partial_returned");
+    expect(outcome.problem.after_partial_output).toBe(true);
+    expect(outcome.problem.received_chars).toBe(12);
+    expect(outcome.mitigation.actions).toContain("suppressed_retry_after_partial");
   });
 
   it("detects partial tool JSON attached to stream errors", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "anthropic",
         query: "hello",
@@ -127,12 +127,12 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("unsafe_partial_tool_call");
-    expect(report.result.status).toBe("safe_failure");
+    expect(outcome.problem.kind).toBe("unsafe_partial_tool_call");
+    expect(outcome.result.status).toBe("safe_failure");
   });
 
   it("treats hidden half-tool-json stream errors as unsafe tool partials", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "anthropic",
         query: "hello",
@@ -150,13 +150,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("unsafe_partial_tool_call");
-    expect(report.result.status).toBe("safe_failure");
-    expect(report.mitigation.actions).toContain("blocked_unobservable_tool_partial");
+    expect(outcome.problem.kind).toBe("unsafe_partial_tool_call");
+    expect(outcome.result.status).toBe("safe_failure");
+    expect(outcome.mitigation.actions).toContain("blocked_unobservable_tool_partial");
   });
 
   it("treats malformed SSE stream errors as safe failures", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -174,13 +174,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("malformed_stream");
-    expect(report.result.status).toBe("safe_failure");
-    expect(report.mitigation.retry_attempts).toBe(0);
+    expect(outcome.problem.kind).toBe("malformed_stream");
+    expect(outcome.result.status).toBe("safe_failure");
+    expect(outcome.mitigation.retry_attempts).toBe(0);
   });
 
   it("treats empty silent streams as content idle aborts", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -196,14 +196,14 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("idle_timeout");
-    expect(report.result.status).toBe("aborted_content_idle_timeout");
+    expect(outcome.problem.kind).toBe("idle_timeout");
+    expect(outcome.result.status).toBe("aborted_content_idle_timeout");
   });
 
   it("prefers retry-after headers over local backoff", async () => {
     const delays: number[] = [];
     let calls = 0;
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -229,12 +229,12 @@ describe("resilience policy", () => {
 
     expect(calls).toBe(2);
     expect(delays).toEqual([1000]);
-    expect(report.mitigation.actions).toContain("honored_retry_after");
+    expect(outcome.mitigation.actions).toContain("honored_retry_after");
   });
 
   it("runs a fallback model after primary attempts are exhausted", async () => {
     const models: string[] = [];
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -258,13 +258,13 @@ describe("resilience policy", () => {
     );
 
     expect(models).toEqual(["primary-model", "fallback-model"]);
-    expect(report.result.status).toBe("recovered");
-    expect(report.mitigation.fallback_used).toBe(true);
-    expect(report.mitigation.actions).toContain("used_fallback_model");
+    expect(outcome.result.status).toBe("recovered");
+    expect(outcome.mitigation.fallback_used).toBe(true);
+    expect(outcome.mitigation.actions).toContain("used_fallback_model");
   });
 
   it("opens a circuit after repeated provider failures", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -284,14 +284,14 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("overloaded");
-    expect(report.result.status).toBe("circuit_opened");
-    expect(report.mitigation.circuit_opened).toBe(true);
-    expect(report.mitigation.actions).toContain("opened_circuit_breaker");
+    expect(outcome.problem.kind).toBe("overloaded");
+    expect(outcome.result.status).toBe("circuit_opened");
+    expect(outcome.mitigation.circuit_opened).toBe(true);
+    expect(outcome.mitigation.actions).toContain("opened_circuit_breaker");
   });
 
   it("opens provider cooldown for repeated overloaded responses", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -311,8 +311,8 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.result.status).toBe("cooldown_opened");
-    expect(report.mitigation.actions).toContain("opened_provider_cooldown");
+    expect(outcome.result.status).toBe("cooldown_opened");
+    expect(outcome.mitigation.actions).toContain("opened_provider_cooldown");
   });
 
   it("blocks later provider-cooldown requests for the same provider key", async () => {
@@ -430,8 +430,8 @@ describe("resilience policy", () => {
     expect(blocked.mitigation.actions).toContain("blocked_provider_cooldown");
   });
 
-  it("reports wall timeout when the wall timer aborts first", async () => {
-    const report = await runWithResilience(
+  it("returns wall timeout when the wall timer aborts first", async () => {
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -451,13 +451,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("wall_timeout");
-    expect(report.result.status).toBe("aborted_wall_timeout");
-    expect(report.mitigation.actions).toContain("aborted_wall_timeout");
+    expect(outcome.problem.kind).toBe("wall_timeout");
+    expect(outcome.result.status).toBe("aborted_wall_timeout");
+    expect(outcome.mitigation.actions).toContain("aborted_wall_timeout");
   });
 
-  it("reports idle timeout when the idle timer aborts first", async () => {
-    const report = await runWithResilience(
+  it("returns idle timeout when the idle timer aborts first", async () => {
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -477,13 +477,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("idle_timeout");
-    expect(report.result.status).toBe("aborted_idle_timeout");
-    expect(report.mitigation.actions).toContain("aborted_idle_timeout");
+    expect(outcome.problem.kind).toBe("idle_timeout");
+    expect(outcome.result.status).toBe("aborted_idle_timeout");
+    expect(outcome.mitigation.actions).toContain("aborted_idle_timeout");
   });
 
   it("resets the idle timer when stream progress is reported", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -516,13 +516,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.result.status).toBe("completed_slow");
-    expect(report.problem.kind).toBe("none");
+    expect(outcome.result.status).toBe("completed_slow");
+    expect(outcome.problem.kind).toBe("none");
   });
 
   it("uses wall timeout as a hard cap for slow streams even when progress is reported", async () => {
     const timeoutEvents: Array<{ timeout_kind: string; timeout_ms: number; attempt: number }> = [];
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -563,14 +563,14 @@ describe("resilience policy", () => {
       }
     );
 
-    expect(report.problem.kind).toBe("wall_timeout");
-    expect(report.result.status).toBe("aborted_wall_timeout");
-    expect(report.mitigation.actions).toContain("aborted_wall_timeout");
+    expect(outcome.problem.kind).toBe("wall_timeout");
+    expect(outcome.result.status).toBe("aborted_wall_timeout");
+    expect(outcome.mitigation.actions).toContain("aborted_wall_timeout");
     expect(timeoutEvents).toEqual([{ timeout_kind: "wall_timeout", timeout_ms: 25, attempt: 1 }]);
   });
 
   it("treats an empty result returned after wall abort as wall timeout", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -591,13 +591,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("wall_timeout");
-    expect(report.result.status).toBe("aborted_wall_timeout");
-    expect(report.mitigation.actions).toContain("aborted_wall_timeout");
+    expect(outcome.problem.kind).toBe("wall_timeout");
+    expect(outcome.result.status).toBe("aborted_wall_timeout");
+    expect(outcome.mitigation.actions).toContain("aborted_wall_timeout");
   });
 
   it("drops background requests instead of retrying overloaded work", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -618,13 +618,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.result.status).toBe("dropped_background");
-    expect(report.mitigation.retry_attempts).toBe(0);
-    expect(report.mitigation.actions).toContain("dropped_background_overload");
+    expect(outcome.result.status).toBe("dropped_background");
+    expect(outcome.mitigation.retry_attempts).toBe(0);
+    expect(outcome.mitigation.actions).toContain("dropped_background_overload");
   });
 
   it("fails safely when the bounded stream queue limit is exceeded", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -641,13 +641,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("stream_backpressure");
-    expect(report.result.status).toBe("safe_failure");
-    expect(report.mitigation.actions).toContain("cancelled_bounded_queue_overflow");
+    expect(outcome.problem.kind).toBe("stream_backpressure");
+    expect(outcome.result.status).toBe("safe_failure");
+    expect(outcome.mitigation.actions).toContain("cancelled_bounded_queue_overflow");
   });
 
   it("cancels cleanly when the consumer drops the stream", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -667,13 +667,13 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("consumer_cancelled");
-    expect(report.result.status).toBe("consumer_cancelled");
-    expect(report.mitigation.actions).toContain("cancelled_after_consumer_drop");
+    expect(outcome.problem.kind).toBe("consumer_cancelled");
+    expect(outcome.result.status).toBe("consumer_cancelled");
+    expect(outcome.mitigation.actions).toContain("cancelled_after_consumer_drop");
   });
 
   it("requires context compaction instead of retrying context overflow", async () => {
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -693,10 +693,10 @@ describe("resilience policy", () => {
       { sleep: async () => undefined, random: () => 0.5 }
     );
 
-    expect(report.problem.kind).toBe("context_overflow");
-    expect(report.result.status).toBe("context_compaction_required");
-    expect(report.mitigation.retry_attempts).toBe(0);
-    expect(report.mitigation.actions).toContain("requires_context_compaction");
+    expect(outcome.problem.kind).toBe("context_overflow");
+    expect(outcome.result.status).toBe("context_compaction_required");
+    expect(outcome.mitigation.retry_attempts).toBe(0);
+    expect(outcome.mitigation.actions).toContain("requires_context_compaction");
   });
 
   it("blocks concurrent work for the same session", async () => {
@@ -752,7 +752,7 @@ describe("resilience policy", () => {
 
   it("stops max-turn loop scenarios before calling the provider", async () => {
     let called = false;
-    const report = await runWithResilience(
+    const outcome = await runWithResilience(
       {
         protocol: "openai-chat",
         query: "hello",
@@ -774,8 +774,8 @@ describe("resilience policy", () => {
     );
 
     expect(called).toBe(false);
-    expect(report.problem.kind).toBe("max_turns_exceeded");
-    expect(report.result.status).toBe("max_turns_exceeded");
-    expect(report.mitigation.actions).toContain("stopped_max_turn_loop");
+    expect(outcome.problem.kind).toBe("max_turns_exceeded");
+    expect(outcome.result.status).toBe("max_turns_exceeded");
+    expect(outcome.mitigation.actions).toContain("stopped_max_turn_loop");
   });
 });

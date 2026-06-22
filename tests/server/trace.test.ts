@@ -204,7 +204,7 @@ describe("server trace store", () => {
     expect(writes).toEqual([]);
   });
 
-  it("reports backpressure when an SSE frame cannot be flushed", () => {
+  it("emits backpressure when an SSE frame cannot be flushed", () => {
     const raw = {
       destroyed: false,
       writableEnded: false,
