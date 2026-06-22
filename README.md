@@ -5,7 +5,7 @@ Lightweight TypeScript harness for testing client resilience against mocked LLM 
 The project has two intentionally named sides:
 
 - `fault-provider`: a local OpenAI/Anthropic-compatible mock inference service that creates controlled failures.
-- `resilience-runner`: a SDK-based client that calls the fault provider, applies resilience behavior, and records what happened.
+- `resilience-runner`: a SDK-based client that calls the fault provider, applies resilience behavior, and emits a timestamped trace of what happened.
 
 ## How It Works
 
@@ -13,7 +13,7 @@ The project has two intentionally named sides:
 
 `fault-provider` never calls a real model. It exposes provider-compatible endpoints, chooses a scenario such as `midstream-close` or `half-tool-json`, then emits valid JSON, valid SSE, malformed SSE, delayed streams, rate limits, or socket closes.
 
-`resilience-runner` behaves like a minimal SDK client. It sends the query through the official SDK, observes how the SDK surfaces each failure, applies bounded retry or safe-failure rules, preserves partial output when available, and emits structured run log events. Request flow code returns a run outcome and receives only a logger abstraction; the reports module projects that outcome into JSON reports.
+`resilience-runner` behaves like a minimal SDK client. It sends the query through the official SDK, observes how the SDK surfaces each failure, applies bounded retry or safe-failure rules, preserves partial output when available, and emits structured trace events. The same trace stream powers the CLI output and the desktop debugger.
 
 The detailed Chinese guide is in [`docs/streaming-resilience.zh-CN.md`](docs/streaming-resilience.zh-CN.md). It contains the full request/response flow, the `S01`-`S20` scenario catalog, and the `UC001`-`UC045` smoke use-case matrix.
 
@@ -22,6 +22,14 @@ The detailed Chinese guide is in [`docs/streaming-resilience.zh-CN.md`](docs/str
 ```bash
 npm install
 ```
+
+## Desktop Debugger
+
+```bash
+npm run desktop
+```
+
+The desktop app starts a visual debug surface for running scenarios. It shows a two-lane timeline: server events on one side, client events on the other, with correlated session/request/attempt ids so you can see when each side handled an event and what it did.
 
 ## Start Fault Provider
 
@@ -63,13 +71,13 @@ npm run resilience:scenarios
 npm run resilience:smoke
 ```
 
-The smoke matrix prints numbered use cases:
+The smoke matrix prints numbered use cases and trace lines:
 
 - `UC001`-`UC015`: `openai-chat`
 - `UC016`-`UC030`: `openai-responses`
 - `UC031`-`UC045`: `anthropic`
 
-Reports are written to `reports/`. JSON reports include `use_case_id` when the run came from the smoke matrix or when `--use-case-id <id>` is passed.
+Trace events and final outcomes include the use-case id when the run came from the smoke matrix or when `--use-case-id <id>` is passed.
 
 Compatibility aliases are also available: `npm run server`, `npm run client`, `npm run scenarios`, and `npm run smoke`.
 
@@ -93,7 +101,7 @@ Compatibility aliases are also available: `npm run server`, `npm run client`, `n
 - Require context compaction for context overflow instead of retrying.
 - Guard same-session concurrency and max-turn loops before calling the provider.
 - Fail safely on bounded queue overflow and consumer cancellation.
-- Emit structured run logs; the default file logger writes JSON reports and smoke Markdown summaries.
+- Emit structured server/client trace events for CLI output and desktop inspection.
 
 ## Scenario Catalog
 
