@@ -8,6 +8,7 @@ jspm_packages/
 # Build outputs
 # ============================================
 dist/
+dist-electron/
 build/
 out/
 *.tsbuildinfo

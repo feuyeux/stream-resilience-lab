@@ -4,13 +4,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runDebugSession } from "../client/debug/session.js";
 import type { RunOptions } from "../shared/types.js";
+import { resolveProjectRoot } from "./paths.js";
 import type { ServerStatus } from "./types.js";
 
 const providerUrl = "http://127.0.0.1:3000/v1";
 const providerHealthUrl = "http://127.0.0.1:3000/health";
 const rendererDevUrl = "http://127.0.0.1:5173";
 const here = dirname(fileURLToPath(import.meta.url));
-const projectRoot = join(here, "..", "..");
+const projectRoot = resolveProjectRoot({ cwd: join(here, "..", "..") });
+const preloadPath = process.env.STREAM_RESILIENCE_LAB_PRELOAD ?? join(projectRoot, "src", "desktop", "preload.ts");
 
 let mainWindow: BrowserWindow | undefined;
 let serverProcess: ChildProcessWithoutNullStreams | undefined;
@@ -39,9 +41,16 @@ async function startServer(): Promise<ServerStatus> {
   if (current.state === "running" || current.state === "external") return current;
 
   publishServerStatus({ state: "starting", url: providerUrl });
-  serverProcess = spawn("node", ["--import", "tsx", "src/server/index.ts"], {
+  // Reuse Electron's bundled Node (via process.execPath + ELECTRON_RUN_AS_NODE)
+  // so we do not require a separate `node` binary on the host PATH.
+  serverProcess = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
     cwd: projectRoot,
-    env: { ...process.env, HOST: "127.0.0.1", PORT: "3000" },
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: "1",
+      HOST: "127.0.0.1",
+      PORT: "3000"
+    },
     windowsHide: true
   });
 
@@ -72,7 +81,7 @@ async function createWindow(): Promise<void> {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: join(projectRoot, "src", "desktop", "preload.ts")
+      preload: preloadPath
     }
   });
 
@@ -99,6 +108,7 @@ app.on("before-quit", () => {
   if (serverProcess) serverProcess.kill();
 });
 
-await app.whenReady();
-await createWindow();
-await checkServer();
+void app.whenReady().then(async () => {
+  await createWindow();
+  await checkServer();
+});

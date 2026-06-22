@@ -32,8 +32,9 @@ export function App() {
   }, []);
 
   const orderedEvents = useMemo(() => orderTraceEvents(events), [events]);
-  const serverEvents = useMemo(() => orderedEvents.filter((event) => event.side === "server"), [orderedEvents]);
-  const clientEvents = useMemo(() => orderedEvents.filter((event) => event.side === "client"), [orderedEvents]);
+  const timelineEvents = useMemo(() => {
+    return orderedEvents.filter((event) => event.side === "server" || event.side === "client");
+  }, [orderedEvents]);
 
   async function run() {
     setEvents([]);
@@ -69,9 +70,45 @@ export function App() {
           <label>Query<textarea value={query} onChange={(event) => setQuery(event.target.value)} /></label>
         </aside>
 
-        <section className="timeline">
-          <Lane title="Server" events={serverEvents} onSelect={setSelected} />
-          <Lane title="Client" events={clientEvents} onSelect={setSelected} />
+        <section className="timeline-container">
+          <div className="timeline-headers">
+            <div className="timeline-header-cell"><h2>Server</h2></div>
+            <div className="timeline-header-cell"><h2>Client</h2></div>
+          </div>
+          <div className="timeline-grid">
+            {timelineEvents.map((event) => {
+              const isServer = event.side === "server";
+              const isSelected = selected?.id === event.id;
+              return (
+                <div key={event.id} className="timeline-row">
+                  <div className="timeline-cell server-cell">
+                    {isServer && (
+                      <button
+                        className={`event-row ${isSelected ? "active" : ""}`}
+                        onClick={() => setSelected(event)}
+                      >
+                        <span>{event.timestamp.slice(11, 23)}</span>
+                        <strong>{event.type}</strong>
+                        <small>{event.summary}</small>
+                      </button>
+                    )}
+                  </div>
+                  <div className="timeline-cell client-cell">
+                    {!isServer && (
+                      <button
+                        className={`event-row ${isSelected ? "active" : ""}`}
+                        onClick={() => setSelected(event)}
+                      >
+                        <span>{event.timestamp.slice(11, 23)}</span>
+                        <strong>{event.type}</strong>
+                        <small>{event.summary}</small>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </section>
 
         <aside className="inspector">
@@ -80,20 +117,5 @@ export function App() {
         </aside>
       </section>
     </main>
-  );
-}
-
-function Lane({ title, events, onSelect }: { title: string; events: TraceEvent[]; onSelect: (event: TraceEvent) => void }) {
-  return (
-    <div className="lane">
-      <h2>{title}</h2>
-      {events.map((event) => (
-        <button key={event.id} className="event-row" onClick={() => onSelect(event)}>
-          <span>{event.timestamp.slice(11, 23)}</span>
-          <strong>{event.type}</strong>
-          <small>{event.summary}</small>
-        </button>
-      ))}
-    </div>
   );
 }
