@@ -23,8 +23,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         calls += 1;
@@ -71,8 +69,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => ({ text: "", events: ["content_block_delta"], toolJson: "{\"city\":\"Par" }),
       { sleep: async () => undefined, random: () => 0.5 }
@@ -95,8 +91,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         const error = new Error("response destroyed before completion") as Error & { partialText: string };
@@ -124,8 +118,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         const error = new Error("response destroyed before completion") as Error & { partialToolJson: string };
@@ -151,8 +143,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         throw new Error("Connection error.");
@@ -177,8 +167,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         throw new Error("response destroyed before completion");
@@ -203,8 +191,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => ({ text: "", events: ["chat.completion.chunk"] }),
       { sleep: async () => undefined, random: () => 0.5 }
@@ -228,8 +214,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         calls += 1;
@@ -262,8 +246,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async (_signal, context) => {
         models.push(context.model);
@@ -293,8 +275,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         const error = new Error("mock overloaded") as Error & { status: number };
@@ -322,8 +302,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         const error = new Error("mock overloaded") as Error & { status: number };
@@ -348,8 +326,6 @@ describe("resilience policy", () => {
       maxAttempts: 1,
       idleTimeoutMs: 500,
       wallTimeoutMs: 2000,
-      reportDir: "reports",
-      json: false
     };
 
     await runWithResilience(
@@ -388,8 +364,6 @@ describe("resilience policy", () => {
       maxAttempts: 1,
       idleTimeoutMs: 500,
       wallTimeoutMs: 2000,
-      reportDir: "reports",
-      json: false
     };
 
     await runWithResilience(
@@ -429,8 +403,6 @@ describe("resilience policy", () => {
       maxAttempts: 1,
       idleTimeoutMs: 500,
       wallTimeoutMs: 2000,
-      reportDir: "reports",
-      json: false
     };
 
     await runWithResilience(
@@ -470,8 +442,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 100,
         wallTimeoutMs: 5,
-        reportDir: "reports",
-        json: false
       },
       async (signal): Promise<never> => {
         return await new Promise<never>((_resolve, reject) => {
@@ -498,8 +468,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 5,
         wallTimeoutMs: 100,
-        reportDir: "reports",
-        json: false
       },
       async (signal): Promise<never> => {
         return await new Promise<never>((_resolve, reject) => {
@@ -526,8 +494,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 30,
         wallTimeoutMs: 200,
-        reportDir: "reports",
-        json: false
       },
       async (signal, context) => {
         await new Promise<void>((resolve, reject) => {
@@ -567,8 +533,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 50,
         wallTimeoutMs: 25,
-        reportDir: "reports",
-        json: false
       },
       async (signal, context): Promise<never> => {
         while (true) {
@@ -617,8 +581,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 100,
         wallTimeoutMs: 5,
-        reportDir: "reports",
-        json: false
       },
       async (signal) => {
         await new Promise<void>((resolve) => {
@@ -647,8 +609,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         const error = new Error("mock overloaded") as Error & { status: number };
@@ -676,8 +636,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => ({ text: "many chunks", events: Array.from({ length: 250 }, (_, index) => `chunk:${index}`) }),
       { sleep: async () => undefined, random: () => 0.5 }
@@ -700,8 +658,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         const error = new Error("consumer dropped stream") as Error & { partialText: string };
@@ -728,8 +684,6 @@ describe("resilience policy", () => {
         maxAttempts: 2,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         const error = new Error("context_length_exceeded") as Error & { status: number };
@@ -759,8 +713,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         await new Promise<void>((resolve) => {
@@ -785,8 +737,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => ({ text: "should not run", events: ["done"] }),
       { sleep: async () => undefined, random: () => 0.5 }
@@ -815,8 +765,6 @@ describe("resilience policy", () => {
         maxAttempts: 1,
         idleTimeoutMs: 500,
         wallTimeoutMs: 2000,
-        reportDir: "reports",
-        json: false
       },
       async () => {
         called = true;

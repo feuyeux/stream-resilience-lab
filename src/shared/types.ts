@@ -85,8 +85,6 @@ export interface RunOptions {
   sessionId?: string;
   currentTurn?: number;
   maxTurns?: number;
-  reportDir: string;
-  json: boolean;
 }
 
 export interface StreamObservation {
@@ -124,13 +122,6 @@ export interface RunOutcome {
     ended_at: string;
     duration_ms: number;
   };
-}
-
-export interface RunReport extends RunOutcome {
-  use_case_id?: string;
-  protocol: Protocol;
-  mode: Mode;
-  scenario: ScenarioName;
 }
 
 export type RunLogEvent =

@@ -1,28 +1,10 @@
 import { Command } from "commander";
 import { pathToFileURL } from "node:url";
 import { listScenarios } from "../shared/scenarios.js";
-import type { Protocol, RunLogger, RunOptions, RunOutcome, RunReport, ScenarioName } from "../shared/types.js";
-import { buildRunReport, createFileRunLogger, writeSmokeSummary } from "./reports.js";
-import { runWithResilience } from "./resilience/policy.js";
-import { runAnthropicMessages } from "./sdk/anthropicMessagesRunner.js";
-import { runOpenAIChat } from "./sdk/openaiChatRunner.js";
-import { runOpenAIResponses } from "./sdk/openaiResponsesRunner.js";
-import type { SdkRunInput, SdkRunResult } from "./sdk/types.js";
-
-type ProtocolRunner = (input: SdkRunInput) => Promise<SdkRunResult>;
-
-type ProtocolRunnerMap = Record<Protocol, ProtocolRunner>;
-
-export interface RunOneDeps {
-  logger?: RunLogger;
-  runners?: Partial<ProtocolRunnerMap>;
-}
-
-const defaultProtocolRunners: ProtocolRunnerMap = {
-  "openai-chat": runOpenAIChat,
-  "openai-responses": runOpenAIResponses,
-  anthropic: runAnthropicMessages
-};
+import { formatTraceLine } from "../shared/trace.js";
+import type { Protocol, RunOptions, ScenarioName } from "../shared/types.js";
+import { runDebugSession } from "./debug/session.js";
+import { runDebugSmoke, smokeModelForUseCase, type DebugSmokeCase } from "./debug/smoke.js";
 
 const smokeCaseDefinitions: Array<{ protocol: Protocol; scenario: ScenarioName }> = [
   { protocol: "openai-chat", scenario: "normal" },
@@ -72,35 +54,12 @@ const smokeCaseDefinitions: Array<{ protocol: Protocol; scenario: ScenarioName }
   { protocol: "anthropic", scenario: "max-turns-exceeded" }
 ];
 
-export const smokeCases: Array<{ id: string; protocol: Protocol; scenario: ScenarioName }> = smokeCaseDefinitions.map((testCase, index) => ({
+export const smokeCases: DebugSmokeCase[] = smokeCaseDefinitions.map((testCase, index) => ({
   id: `UC${String(index + 1).padStart(3, "0")}`,
   ...testCase
 }));
 
-export function smokeModelForUseCase(useCaseId: string): string {
-  return `${useCaseId.toLowerCase()}-model`;
-}
-
-export function formatHumanReport(report: RunReport, text: string): string {
-  const visibleText = text || report.output_text || "";
-  return [
-    `Protocol: ${report.protocol}`,
-    `Mode: ${report.mode}`,
-    `Scenario: ${report.scenario}`,
-    ...(report.use_case_id ? [`Use case: ${report.use_case_id}`] : []),
-    "",
-    "Text received:",
-    visibleText,
-    "",
-    "Result:",
-    `status=${report.result.status}`,
-    `problem=${report.problem.kind}`,
-    `partial=${report.problem.after_partial_output}`,
-    `received_chars=${report.problem.received_chars}`,
-    `mitigations=${report.mitigation.actions.join(",") || "none"}`,
-    `retry_attempts=${report.mitigation.retry_attempts}`
-  ].join("\n");
-}
+export { smokeModelForUseCase };
 
 function parseProtocol(value: string): Protocol {
   if (value === "openai-chat" || value === "openai-responses" || value === "anthropic") return value;
@@ -130,30 +89,8 @@ function makeOptions(protocol: Protocol, query: string, flags: Record<string, un
     maxStreamEvents: flags.maxStreamEvents ? Number(flags.maxStreamEvents) : undefined,
     sessionId: flags.sessionId ? String(flags.sessionId) : undefined,
     currentTurn: flags.currentTurn ? Number(flags.currentTurn) : undefined,
-    maxTurns: flags.maxTurns ? Number(flags.maxTurns) : undefined,
-    reportDir: String(flags.reportDir ?? "reports"),
-    json: Boolean(flags.json)
+    maxTurns: flags.maxTurns ? Number(flags.maxTurns) : undefined
   };
-}
-
-export async function runOne(options: RunOptions, deps: RunOneDeps = {}): Promise<{ outcome: RunOutcome; text: string }> {
-  let text = "";
-  const protocolRunner = deps.runners?.[options.protocol] ?? defaultProtocolRunners[options.protocol];
-  const outcome = await runWithResilience(options, async (signal, context) => {
-    const runnerInput = {
-      baseUrl: options.baseUrl,
-      model: context.model,
-      query: options.query,
-      stream: options.mode === "stream",
-      scenario: options.scenario,
-      signal,
-      recordStreamProgress: context.recordStreamProgress
-    };
-    const result = await protocolRunner(runnerInput);
-    text = result.text;
-    return result;
-  }, { logger: deps.logger });
-  return { outcome, text };
 }
 
 export function buildProgram(): Command {
@@ -180,17 +117,16 @@ export function buildProgram(): Command {
     .option("--session-id <id>", "session lock key")
     .option("--current-turn <n>", "current agent turn count")
     .option("--max-turns <n>", "maximum agent turn count")
-    .option("--report-dir <path>", "report output directory", "reports")
-    .option("--json", "print JSON report", false)
     .action(async (protocolValue: string, query: string, scenarioArg: string | undefined, wallTimeoutMsArg: string | undefined, flags: Record<string, unknown>) => {
       const protocol = parseProtocol(protocolValue);
       if (scenarioArg && flags.scenario === "normal") flags.scenario = scenarioArg;
       if (wallTimeoutMsArg && flags.wallTimeoutMs === "5000") flags.wallTimeoutMs = wallTimeoutMsArg;
       const options = makeOptions(protocol, query, flags);
-      const logger = createFileRunLogger(options.reportDir, options);
-      const { outcome, text } = await runOne(options, { logger });
-      const report = buildRunReport(options, outcome);
-      console.log(options.json ? JSON.stringify(report, null, 2) : formatHumanReport(report, text));
+      await runDebugSession(options, {
+        onTraceEvent(event) {
+          console.log(formatTraceLine(event));
+        }
+      });
     });
 
   program.command("scenarios").action(() => {
@@ -202,33 +138,12 @@ export function buildProgram(): Command {
   program
     .command("smoke")
     .option("--base-url <url>", "provider base URL", "http://127.0.0.1:3000/v1")
-    .option("--report-dir <path>", "report output directory", "reports")
     .action(async (flags: Record<string, unknown>) => {
-      const reports: RunReport[] = [];
-      for (const testCase of smokeCases) {
-        const options = makeOptions(testCase.protocol, "hello", {
-          ...flags,
-          useCaseId: testCase.id,
-          scenario: testCase.scenario,
-          model: smokeModelForUseCase(testCase.id),
-          stream: true,
-          maxAttempts: "2",
-          idleTimeoutMs: "500",
-          wallTimeoutMs: "2000",
-          fallbackModel: testCase.scenario === "fallback-recovery" ? "fallback-model" : undefined,
-          maxStreamEvents: testCase.scenario === "bounded-queue-overflow" ? "100" : undefined,
-          currentTurn: testCase.scenario === "max-turns-exceeded" ? "4" : undefined,
-          maxTurns: testCase.scenario === "max-turns-exceeded" ? "3" : undefined
-        });
-        const logger = createFileRunLogger(options.reportDir, options);
-        const { outcome } = await runOne(options, { logger });
-        const report = buildRunReport(options, outcome);
-        reports.push(report);
-        console.log(
-          `${testCase.id.padEnd(6)} ${report.protocol.padEnd(17)} ${report.scenario.padEnd(25)} ${report.problem.kind.padEnd(22)} ${(report.mitigation.actions.join(",") || "none").padEnd(42)} ${report.result.status}`
-        );
-      }
-      await writeSmokeSummary(String(flags.reportDir ?? "reports"), reports);
+      await runDebugSmoke(smokeCases, flags, {
+        onTraceEvent(event) {
+          console.log(formatTraceLine(event));
+        }
+      });
     });
 
   program.command("help-text").action(() => {

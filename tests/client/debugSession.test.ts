@@ -12,9 +12,7 @@ function makeOptions(): RunOptions {
     baseUrl: "http://127.0.0.1:3000/v1",
     maxAttempts: 2,
     idleTimeoutMs: 1000,
-    wallTimeoutMs: 5000,
-    reportDir: "reports",
-    json: false
+    wallTimeoutMs: 5000
   };
 }
 

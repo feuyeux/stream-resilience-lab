@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { RunOptions, RunReport, ScenarioName, StreamObservation } from "../../src/shared/types.js";
+import type { RunOptions, ScenarioName, StreamObservation } from "../../src/shared/types.js";
 
 describe("shared types", () => {
-  it("allows a complete run report shape", () => {
+  it("allows complete report-free run options and stream observation shapes", () => {
     void ("normal" satisfies ScenarioName);
-    void ({
+    const options = {
       protocol: "openai-chat",
       query: "test query",
       mode: "stream",
@@ -13,10 +13,8 @@ describe("shared types", () => {
       baseUrl: "http://localhost",
       maxAttempts: 1,
       idleTimeoutMs: 1000,
-      wallTimeoutMs: 2000,
-      reportDir: ".",
-      json: true
-    } satisfies RunOptions);
+      wallTimeoutMs: 2000
+    } satisfies RunOptions;
     void ({
       events: [],
       text: "",
@@ -27,34 +25,6 @@ describe("shared types", () => {
       toolJsonComplete: false
     } satisfies StreamObservation);
 
-    const report: RunReport = {
-      request_id: "mock_1",
-      protocol: "openai-chat",
-      mode: "stream",
-      scenario: "normal",
-      output_text: "hello",
-      problem: {
-        kind: "none",
-        after_partial_output: false,
-        received_chars: 0
-      },
-      mitigation: {
-        actions: [],
-        retry_attempts: 0,
-        fallback_used: false,
-        circuit_opened: false
-      },
-      result: {
-        status: "completed",
-        safe_to_retry_automatically: true
-      },
-      timing: {
-        started_at: "2026-06-19T00:00:00.000Z",
-        ended_at: "2026-06-19T00:00:00.001Z",
-        duration_ms: 1
-      }
-    };
-
-    expect(report.protocol).toBe("openai-chat");
+    expect(options.protocol).toBe("openai-chat");
   });
 });
