@@ -977,7 +977,7 @@ export function App() {
   const [events, setEvents] = useState<TraceEvent[]>([]);
   const [selected, setSelected] = useState<TraceEvent | undefined>();
   const [protocol, setProtocol] = useState<Protocol>("openai-chat");
-  const [scenario, setScenario] = useState<ScenarioName>("midstream-close");
+  const [scenario, setScenario] = useState<ScenarioName>("normal");
   const [query, setQuery] = useState("hello");
 
   // Advanced configurations
