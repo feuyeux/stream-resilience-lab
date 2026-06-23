@@ -490,11 +490,11 @@ retry_attempts=0
 
 ##### 客户端
 
-SDK/Runner 暴露：只要在 `wallTimeoutMs` 内完成，Runner 返回完整文本。每收到一个 SDK 流事件，Runner 会调用 `recordStreamProgress()` 刷新 idle timer；但这不会刷新 wall timer。`wallTimeoutMs` 通过 `AbortController` 的 wall timer 传给官方 SDK 请求，是每次 attempt 的总时限硬上限。
+SDK/Runner 暴露：只要在 `wallTimeoutMs` 内完成，Runner 返回完整文本。每收到一批 SDK 流事件，Runner 会调用 `recordStreamProgress()` 刷新 idle timer；这表示 `idleTimeoutMs` 控制的是相邻两批流事件之间最多等待多久，而不是整次请求的总耗时。刷新 idle timer 不会刷新 wall timer。`wallTimeoutMs` 通过 `AbortController` 的 wall timer 传给官方 SDK 请求，是每次 attempt 的总时限硬上限。
 
 客户端如何判断“服务端超时”：客户端不等待服务端显式返回 timeout。`runAttempts()` 在每次 attempt 开始时创建 `wallTimer` 和 `idleTimer`。`wallTimer` 到期表示这次请求总耗时超过预算；`idleTimer` 到期表示 SDK 长时间没有暴露任何流事件。二者触发时都会调用 `abortWith()`，先记录 `timeout_triggered`，再用带 `timeoutKind` 的 `ResilienceTimeoutError` abort SDK 请求。SDK 抛错后，`normalizeAttemptError()` 会优先读取 `AbortSignal.reason`，所以即使 SDK 只暴露普通 `aborted` 错误，策略也能知道是 `wall_timeout` 还是 `idle_timeout`。
 
-客户端策略：成功路径中，`statusForSuccess()` 根据场景把状态标记为 `completed_slow`。如果 wall timer 先触发，`runWithResilience()` 会用 `AbortSignal.reason` 识别 `wall_timeout`。如果此时没有可见文本，最终 outcome 是 `status=aborted_wall_timeout`，并记录 `aborted_wall_timeout` mitigation；如果 SDK/Runner 已经暴露 partial text，则策略优先保护 partial output，返回 `status=partial_returned`、`problem=wall_timeout`，并记录 `tracked_partial_output` 与 `suppressed_retry_after_partial`。换句话说，慢流有持续进度只能避免 idle timeout，不能绕过 wall timeout；而一旦已经有可见输出，自动重试仍会被抑制。
+客户端策略：成功路径中，`statusForSuccess()` 根据场景把状态标记为 `completed_slow`。如果某一批 chunk 之前的等待超过 `idleTimeoutMs`，idle timer 会先触发并中止请求；如果流一直有进度但总耗时超过 `wallTimeoutMs`，wall timer 会先触发。如果 wall timer 先触发，`runWithResilience()` 会用 `AbortSignal.reason` 识别 `wall_timeout`。如果此时没有可见文本，最终 outcome 是 `status=aborted_wall_timeout`，并记录 `aborted_wall_timeout` mitigation；如果 SDK/Runner 已经暴露 partial text，则策略优先保护 partial output，返回 `status=partial_returned`、`problem=wall_timeout`，并记录 `tracked_partial_output` 与 `suppressed_retry_after_partial`。换句话说，慢流有持续进度只能避免 idle timeout，不能绕过 wall timeout；而一旦已经有可见输出，自动重试仍会被抑制。
 
 | 字段 | 值 |
 |---|---|
@@ -507,10 +507,10 @@ S02 的 timeout 边界如下：
 
 | 条件 | 客户端结果 |
 |---|---|
-| 慢流在 `wallTimeoutMs` 内结束 | `completed_slow` |
+| 每批 chunk 间隔小于 `idleTimeoutMs`，且慢流在 `wallTimeoutMs` 内结束 | `completed_slow` |
 | 慢流持续有事件，但总耗时超过 `wallTimeoutMs`，且没有可见文本 | `aborted_wall_timeout` |
 | 慢流持续有事件，但总耗时超过 `wallTimeoutMs`，且已有 partial text | `partial_returned`，`problem.kind=wall_timeout` |
-| 长时间没有任何 SDK 流事件，超过 `idleTimeoutMs` | `aborted_idle_timeout` |
+| 任意两批 SDK 流事件之间等待超过 `idleTimeoutMs` | `aborted_idle_timeout` |
 
 #### S03 `flood`
 

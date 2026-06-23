@@ -93,7 +93,7 @@ Compatibility aliases are also available: `npm run server`, `npm run client`, `n
 - Honor `retry-after` / `retry-after-ms` when SDK errors expose headers.
 - Track visible partial output from SDK stream errors when the SDK exposes it.
 - Suppress automatic retry after visible partial output.
-- Abort hanging streams with reasoned wall/idle timeout signals, resetting idle timers on stream progress.
+- Abort hanging streams with reasoned wall/idle timeout signals; `idleTimeoutMs` is the per-chunk idle budget reset by stream progress, while `wallTimeoutMs` is the total attempt hard cap.
 - Block incomplete or unobservable tool-call JSON in `half-tool-json` scenarios.
 - Recover through a fallback model before any partial output is visible.
 - Open circuit-breaker and provider cooldown states, then block later requests for the same provider key.
@@ -110,7 +110,7 @@ Scenario IDs are stable documentation handles. The canonical source of names is 
 | ID | Scenario | Client mitigation focus |
 |---|---|---|
 | `S01` | `normal` | Track completed output |
-| `S02` | `slow` | Complete slow stream inside timeout |
+| `S02` | `slow` | Complete slow stream when per-chunk idle and total wall budgets both hold |
 | `S03` | `flood` | Consume high-volume chunks |
 | `S04` | `rate-limit-retry-after` | Retry before partial output; honor retry-after |
 | `S05` | `overloaded-retry-after` | Retry before partial output |
