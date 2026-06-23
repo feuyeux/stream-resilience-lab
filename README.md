@@ -31,6 +31,8 @@ npm run desktop
 
 The desktop app starts a visual debug surface for running scenarios. It shows a two-lane timeline: server events on one side, client events on the other, with correlated session/request/attempt ids so you can see when each side handled an event and what it did.
 
+![Stream Resilience Lab desktop debugger showing the two-lane server/client timeline](docs/assets/Screenshot%202026-06-23%20171410.png)
+
 ## Start Fault Provider
 
 ```bash
