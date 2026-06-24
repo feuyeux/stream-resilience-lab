@@ -51,333 +51,333 @@ interface ScenarioBehavior {
 
 const scenarioBehaviors: Record<ScenarioName, ScenarioBehavior> = {
   "normal": {
-    server: "分块均匀发送完整的流文本数据，最后发送正常的 [DONE] 结束标记。",
-    client: "正常接收并重组完整文本，记录 tracked_output 动作，生成 completed 成功状态。"
+    server: "无故障。正常发送完整流式响应。",
+    client: "正常消费所有 chunk，累积文本，报告成功。"
   },
   "slow": {
-    server: "以 150ms 的较长间隔延迟发送文本块，最后发送结束标记。",
-    client: "把 idleTimeoutMs 作为每批流事件之间的最大等待时间；每收到一批就刷新空闲定时器。wallTimeoutMs 是整次 attempt 的总耗时硬上限，不会被刷新；因此批间隔未超时且总耗时足够时返回 completed_slow，否则触发 idle_timeout 或 wall_timeout。"
+    server: "将 chunk 间隔从 5ms 提升到 150ms，模拟 provider 响应缓慢。",
+    client: "用 wall/idle timeout 区分「正常慢」和「需要中止的超时」。在预算内允许慢流完成；超出则 abort。"
   },
   "rate-limit-retry-after": {
-    server: "在首个 token 发送前返回 HTTP 429 速率限制错误，并在 headers 中附带 retry-after: 1 秒头部。",
-    client: "由于还没有可见的输出，识别为 rate_limited 并等待头部指定时间后自动发起重试。"
+    server: "返回 HTTP 429 + retry-after: 1，模拟 provider 限流。每次请求都返回 429，不释放。",
+    client: "解析 retry-after header，在首 token 前安全窗口内有限重试，耗尽后返回 exhausted。"
   },
   "overloaded-retry-after": {
-    server: "在首个 token 发送前返回 HTTP 529 服务过载错误，并在 headers 中附带 retry-after: 1 秒头部。",
-    client: "识别为 overloaded 错误。由于无部分输出，启动自动重试策略。"
+    server: "返回 HTTP 529 + retry-after: 1，模拟 provider 过载。",
+    client: "将 529 归类为 overloaded，重试逻辑与限流场景一致。"
   },
   "server-error": {
-    server: "在首个 token 发送前直接返回 HTTP 500 服务器故障错误。",
-    client: "识别为 server_error 错误。无部分输出，允许自动发起另一次请求重试。"
+    server: "返回 HTTP 500，无 retry-after header，模拟通用服务端崩溃。",
+    client: "归类为 server_error，走本地指数退避 + jitter 重试，不记录 honored_retry_after。"
   },
   "midstream-close": {
-    server: "正常发送前两个分块，随后不发送任何结束标记，直接单方面强行销毁 TCP socket 物理连接。",
-    client: "捕获流异常中断，安全保留已收到的部分输出。因为已经产生了输出，强行抑制自动重试与 fallback，返回 partial_returned。"
+    server: "发送 2 个文本 chunk 后销毁 socket，不发送协议结束事件。模拟 provider 网络中断或进程崩溃。",
+    client: "SDK 捕获连接错误，Runner 附加已累积的 partial state，策略层保留 partial text 并抑制自动重试。"
   },
   "half-sse-frame": {
-    server: "写入不完整、截断的 SSE 字符串帧后立即强行销毁 socket。",
-    client: "底层解析层捕获解析错误。客户端判定流发生不可恢复的损坏，归类为安全失败 safe_failure，防止无限重试。"
+    server: "写入半截 SSE 数据帧（不完整 JSON + 无分隔符）后销毁 socket。模拟 provider 崩溃时发出了不完整协议数据。",
+    client: "显式安全失败：SDK 报错时 blocked_malformed_stream，SDK 返回空文本时 blocked_malformed_empty_stream。不重试。"
   },
   "silent-hang": {
-    server: "建立连接并发送头部，之后连接无限期挂起不作任何响应，且不发送任何心跳包。",
-    client: "客户端空闲时间达到 idleTimeoutMs 限制，本地定时器触发主动 abort 中止请求，归类为 aborted_idle_timeout。"
+    server: "发送协议起始帧后不再发送任何内容，保持连接直到客户端关闭。模拟 provider 卡死或网关保持连接。",
+    client: "通过 idle timeout（无事件刷新）或 wall timeout（总时间超限）中止，归类为 idle_timeout。"
   },
   "heartbeat-only": {
-    server: "保持流连接打开，只发送心跳/ping 帧，不发任何实际业务文本内容。",
-    client: "客户端判定心跳不属于有用业务内容，虽然物理网络保持活动，但无可见文本导致空闲超时，主动 abort 终止请求。"
+    server: "只发送心跳/ping 事件，不发文本增量。模拟 provider 连接存活但模型未开始生成。",
+    client: "不将心跳当作业务文本。若 SDK 暴露心跳为事件则刷新 idle timer，否则不刷新。最终由超时或空文本路径终止。"
   },
   "half-tool-json": {
-    server: "流式发送半截工具调用参数 JSON (如未闭合的括号对)，随后断流销毁 socket。",
-    client: "解析工具参数发现不完整，为防止将破碎的参数交由下游执行造成不可逆副作用，强制阻断执行并归类为 safe_failure 保护。"
+    server: "发送工具调用起始事件 + 不完整参数 {\"city\":\"Par 后销毁 socket。模拟 provider 在工具调用中途崩溃。",
+    client: "识别半截工具 JSON 为安全底线：不执行工具，不当普通网络错误重试，直接 safe_failure。"
   },
   "flood": {
-    server: "无延迟地高频快速发送大量小分块文本 (250个 chunk)。",
-    client: "测试客户端大吞吐量无间断流式接收能力，不丢包地重组完整文本返回。"
+    server: "快速发送 250 个 chunk（每 5ms 一个），模拟 provider 高吞吐量输出。",
+    client: "Runner 持续消费所有 chunk，验证不因高频而丢数据。未设事件预算时无背压干预。"
   },
   "bounded-queue-overflow": {
-    server: "快速连续发送大量分块文本，分块总量超出客户端设定的队列上限。",
-    client: "触发背压自保机制，主动丢弃流连接以防内存溢出崩溃，归类为 safe_failure 保护。"
+    server: "快速发送 250 个 chunk，与 flood 相同。故障不在服务端，而在客户端本地背压预算（--max-stream-events 100）。",
+    client: "检测到事件数超过预算上限，主动取消消费并安全失败。背压保护优先于输出成功。"
   },
   "consumer-drop": {
-    server: "正常发送流数据，直到客户端下游消费者取消或主动断开连接。",
-    client: "消费者取消订阅时主动向服务端发送 abort 信号，并在 outcome 中分类为 consumer_cancelled 正常退出，不进行重试。"
+    server: "故障方是消费端（用户关闭页面、UI 停止读取），不是服务端。服务端行为与 midstream-close 相同（发送 2 chunk 后断流）。",
+    client: "通过场景标识或错误消息识别为消费端取消，不制造新的 provider 请求。"
   },
   "fallback-recovery": {
-    server: "主模型服务发生 529 服务过载；切换到备用模型 (fallback model) 后健康响应。",
-    client: "主模型调用前 token 报错，由于无输出，在耗尽尝试后自动降级并重试 fallbackModel 恢复响应。"
+    server: "对 primary model 返回 529，对 fallback model 正常返回。模拟 primary provider 过载但备用可用。",
+    client: "重试耗尽后检查无 partial，切换到 fallback model 重新发起请求，成功则报告 recovered。"
   },
   "circuit-breaker-open": {
-    server: "持续处于 529 服务过载故障状态。",
-    client: "检测到故障尝试耗尽后打开熔断器 (circuit_opened)，并在熔断器打开冷却期内拦截后置请求并直接熔断保护。"
+    server: "持续返回 529。但熔断器的真正作用在客户端 preflight：后续请求在到达服务端前就被拦截。",
+    client: "重试耗尽后打开熔断器，写入进程内 Map。后续同一 provider key 的请求在 preflight 阶段直接返回 circuit_opened。"
   },
   "provider-cooldown": {
-    server: "持续处于服务过载响应中。",
-    client: "当故障耗尽后触发 provider cooldown，短时间内拒绝再次向该提供者请求，避免 retry storm (重试风暴) 冲击。"
+    server: "持续返回 529。与熔断器类似，但 cooldown 语义上表示「请求速率过高需要冷却」。",
+    client: "重试耗尽后打开 cooldown，后续同一 provider key 的请求在 preflight 被拦截，返回 cooldown_opened。"
   },
   "background-overloaded": {
-    server: "服务过载拒绝响应。",
-    client: "检测到当前请求为低优先级 background (后台) 任务且遇到过载故障，直接丢弃，不挤占前台高优先级资源的重试配额。"
+    server: "返回 529 + retry-after: 1。故障本身与 overloaded-retry-after 相同。",
+    client: "检测到优先级为 background + 错误为 overloaded，直接丢弃后台任务，不挤占前台请求的 provider 预算。"
   },
   "context-overflow": {
-    server: "检测到输入提示词上下文超出模型长度限制，返回上下文溢出专用错误。",
-    client: "识别为 context_overflow，这是一种确定性的输入故障，普通重试无用。不进行重试，并标记 context_compaction_required。"
+    server: "返回 HTTP 400 + context_length_exceeded，模拟 provider 拒绝过大的上下文。",
+    client: "识别为 context_overflow，不重试（原样重试必然再次失败），要求上层先执行上下文压缩。"
   },
   "session-lock-conflict": {
-    server: "模拟接收多任务请求。",
-    client: "preflight 阶段判定同一 sessionId 存在未结束的并发会话，拒绝启动当前请求，会话锁闭并返回 session_locked 状态。"
+    server: "无服务端故障。故障方是客户端本地状态：同一 session 已有请求在进行，并发冲突。",
+    client: "preflight 检查 activeSessionLocks，发现 session 已占用，不调用 SDK Runner，直接返回 session_locked。"
   },
   "max-turns-exceeded": {
-    server: "模拟接收请求。",
-    client: "Agent 交互回合 currentTurn 超过上限 maxTurns，在 preflight 阶段便强行阻断 API 呼叫，标记 max_turns_exceeded。"
+    server: "无服务端故障。故障方是客户端本地状态：Agent 循环已达到配置的最大轮次。",
+    client: "preflight 检查 currentTurn > maxTurns，在进入 SDK Runner 前终止，返回 max_turns_exceeded。"
   }
 };
 
 const scenarioBehaviorsEn: Record<ScenarioName, ScenarioBehavior> = {
   "normal": {
-    server: "Streams complete text chunks evenly and closes normally with a standard [DONE] signal.",
-    client: "Accumulates text fully and returns completed status, logging the tracked_output action."
+    server: "No fault. Server sends complete streaming response normally.",
+    client: "Consumes all chunks, accumulates text, and reports success."
   },
   "slow": {
-    server: "Streams text chunks with a relatively long delay (150ms) between each chunk.",
-    client: "Uses idleTimeoutMs as the maximum wait between stream chunks and resets that timer on each chunk. wallTimeoutMs remains the total attempt hard cap; finishing within both budgets returns completed_slow, otherwise idle_timeout or wall_timeout fires."
+    server: "Increases chunk interval from 5ms to 150ms, simulating slow provider response.",
+    client: "Uses wall/idle timeout to distinguish 'normal slow' from 'needs-abort timeout'. Allows slow stream to finish within budget; aborts when exceeded."
   },
   "rate-limit-retry-after": {
-    server: "Returns HTTP 429 (Rate Limited) before sending the first token, attaching a retry-after: 1s header.",
-    client: "Identifies as rate_limited. Since there is no partial output yet, it schedules an automatic retry honoring the retry delay."
+    server: "Returns HTTP 429 + retry-after: 1, simulating provider rate limiting. Every request returns 429.",
+    client: "Parses retry-after header, performs limited retries in the pre-token safe window, returns exhausted when depleted."
   },
   "overloaded-retry-after": {
-    server: "Returns HTTP 529 (Overloaded) before sending the first token, attaching a retry-after: 1s header.",
-    client: "Identifies as overloaded. With no partial output yet, it attempts an automatic retry."
+    server: "Returns HTTP 529 + retry-after: 1, simulating provider overload.",
+    client: "Classifies 529 as overloaded, retry logic mirrors rate-limit scenario."
   },
   "server-error": {
-    server: "Returns HTTP 500 (Internal Server Error) before sending the first token.",
-    client: "Identifies as server_error. Since there is no partial output, it permits an automatic retry after a safety backoff."
+    server: "Returns HTTP 500 without retry-after header, simulating generic server crash.",
+    client: "Classifies as server_error, uses local exponential backoff + jitter retry, does not record honored_retry_after."
   },
   "midstream-close": {
-    server: "Streams the first two text chunks and then abruptly destroys the TCP socket without ending properly.",
-    client: "Detects connection close. Since partial output exists, it protects it, suppresses automatic retry/fallback, and returns partial_returned."
+    server: "Sends 2 text chunks then destroys socket without sending protocol end event. Simulates provider network interruption or process crash.",
+    client: "SDK captures connection error, Runner attaches accumulated partial state, policy preserves partial text and suppresses auto-retry."
   },
   "half-sse-frame": {
-    server: "Sends a truncated/incomplete SSE string packet and then abruptly destroys the socket.",
-    client: "Detects parser/connection error. Categorizes as malformed_stream and enters safe_failure to prevent infinite retry loops."
+    server: "Writes incomplete SSE data frame (truncated JSON + no delimiter) then destroys socket. Simulates incomplete protocol data from provider crash.",
+    client: "Explicit safe failure: blocked_malformed_stream when SDK errors, blocked_malformed_empty_stream when SDK returns empty text. No retry."
   },
   "silent-hang": {
-    server: "Opens connection, sends headers, then hangs indefinitely without sending chunks or ping pongs.",
-    client: "Exceeds idleTimeoutMs. The client idle timer triggers, aborting the request and classifying as aborted_idle_timeout."
+    server: "Sends protocol start frame then stops sending anything, keeping connection until client closes. Simulates provider freeze or gateway holding connection.",
+    client: "Aborts via idle timeout (no event refresh) or wall timeout (total time exceeded), classified as idle_timeout."
   },
   "heartbeat-only": {
-    server: "Keeps connection open but only sends pings/heartbeats without any real text content.",
-    client: "Recognizes that heartbeat events carry no text. An idle timeout is triggered and aborts, categorizing as aborted_content_idle_timeout."
+    server: "Only sends heartbeat/ping events, no text deltas. Simulates live connection but model has not started generating.",
+    client: "Does not treat heartbeats as business text. Refreshes idle timer only if SDK exposes heartbeats as events. Terminates via timeout or empty text path."
   },
   "half-tool-json": {
-    server: "Streams incomplete tool function argument JSON (e.g. unclosed brackets), then destroys the socket.",
-    client: "Detects incomplete JSON block. Blocks the execution of the tool call to prevent side-effects, marking safe_failure."
+    server: "Sends tool call start event + incomplete parameter {\"city\":\"Par then destroys socket. Simulates provider crash mid-tool-call.",
+    client: "Identifies truncated tool JSON as safety baseline: does not execute tool, does not retry as generic network error, direct safe_failure."
   },
   "flood": {
-    server: "Streams 250 small chunks extremely fast with no delay.",
-    client: "Tests client buffer capacity to consume rapid stream delta events without dropping frames."
+    server: "Rapidly sends 250 chunks (one every 5ms), simulating high-throughput provider output.",
+    client: "Runner continuously consumes all chunks, verifying no data loss from high frequency. No backpressure when no event budget is set."
   },
   "bounded-queue-overflow": {
-    server: "Streams a large count of chunks quickly, exceeding the client event budget.",
-    client: "Triggers backpressure self-protection. Aborts the connection to protect memory, marking safe_failure."
+    server: "Rapidly sends 250 chunks, same as flood. Fault is not in server but in client-side backpressure budget (--max-stream-events 100).",
+    client: "Detects event count exceeds budget limit, proactively cancels consumption and fails safely. Backpressure protection takes priority over output success."
   },
   "consumer-drop": {
-    server: "Streams text deltas normally until the downstream consumer disconnects.",
-    client: "Aborts the stream connection, classifying it as consumer_cancelled. Does not treat this as a provider failure to retry."
+    server: "Fault is the consumer (user closes page, UI stops reading), not the server. Server behavior mirrors midstream-close (2 chunks then disconnect).",
+    client: "Identifies consumer cancellation via scenario flag or error message, does not create new provider requests."
   },
   "fallback-recovery": {
-    server: "Primary model returns HTTP 529; fallback model behaves normally.",
-    client: "Fails on primary model before token. Automatically redirects the query to fallbackModel to recover."
+    server: "Returns 529 for primary model, normal for fallback model. Simulates primary provider overload with backup available.",
+    client: "After retry exhaustion, checks no partial exists, switches to fallback model and re-issues request, reports recovered on success."
   },
   "circuit-breaker-open": {
-    server: "Returns HTTP 529 consistently.",
-    client: "Opens circuit breaker (circuit_opened) after consecutive failures, blocking downstream retry storms."
+    server: "Persistently returns 529. But the circuit breaker's real role is client-side preflight: subsequent requests are blocked before reaching the server.",
+    client: "Opens circuit breaker after retry exhaustion, writes to in-process Map. Subsequent requests for the same provider key return circuit_opened at preflight."
   },
   "provider-cooldown": {
-    server: "Returns HTTP 529 consistently.",
-    client: "Enters provider cooldown after consecutive failures, blocking calls to this provider temporarily."
+    server: "Persistently returns 529. Similar to circuit breaker but cooldown semantically means 'request rate too high, needs cooling'.",
+    client: "Opens cooldown after retry exhaustion. Subsequent requests for the same provider key are blocked at preflight, returning cooldown_opened."
   },
   "background-overloaded": {
-    server: "Returns HTTP 529 overload response.",
-    client: "Detects background request class under overload. Discards it immediately to conserve high-priority resources."
+    server: "Returns 529 + retry-after: 1. Fault is identical to overloaded-retry-after.",
+    client: "Detects background priority + overloaded error, discards background task immediately to preserve foreground request provider budget."
   },
   "context-overflow": {
-    server: "Rejects request due to input exceeding maximum context length, returning context limit error.",
-    client: "Recognizes context_overflow. Suppresses retry/fallback and indicates context_compaction_required."
+    server: "Returns HTTP 400 + context_length_exceeded, simulating provider rejecting oversized context.",
+    client: "Identifies as context_overflow, does not retry (same retry would fail again), requires upstream context compaction."
   },
   "session-lock-conflict": {
-    server: "Accepts requests.",
-    client: "Finds concurrent requests running under the same sessionId. Blocks current call (session_locked) to protect history."
+    server: "No server fault. Fault is client-side local state: same session already has an active request, concurrent conflict.",
+    client: "preflight checks activeSessionLocks, finds session occupied, does not call SDK Runner, returns session_locked directly."
   },
   "max-turns-exceeded": {
-    server: "Accepts requests.",
-    client: "Blocks API call before dispatching (max_turns_exceeded) because currentTurn has exceeded the maxTurns threshold."
+    server: "No server fault. Fault is client-side local state: Agent loop has reached the configured maximum turns.",
+    client: "preflight checks currentTurn > maxTurns, terminates before entering SDK Runner, returns max_turns_exceeded."
   }
 };
 
 const scenarioBehaviorsFr: Record<ScenarioName, ScenarioBehavior> = {
   "normal": {
-    server: "Diffuse des fragments de texte complets uniformément et se termine avec un signal [DONE] normal.",
-    client: "Reçoit et reconstruit le texte complet, enregistre tracked_output et génère un statut completed."
+    server: "Aucune faute. Le serveur envoie une réponse en streaming complète normalement.",
+    client: "Consomme tous les fragments, accumule le texte et signale le succès."
   },
   "slow": {
-    server: "Diffuse des fragments avec un délai de 150 ms entre chaque paquet, puis envoie le signal [DONE].",
-    client: "Utilise idleTimeoutMs comme attente maximale entre deux fragments et réinitialise ce minuteur à chaque fragment. wallTimeoutMs reste la limite globale de l'attempt; si les deux budgets tiennent, le statut est completed_slow."
+    server: "Augmente l'intervalle entre fragments de 5ms à 150ms, simulant une réponse lente du fournisseur.",
+    client: "Utilise les timeouts wall/idle pour distinguer « lenteur normale » et « timeout nécessitant un arrêt ». Permet au flux lent de finir dans le budget ; sinon abort."
   },
   "rate-limit-retry-after": {
-    server: "Renvoie une erreur HTTP 429 avant le premier jeton, avec une en-tête retry-after de 1s.",
-    client: "Identifié comme rate_limited. Sans sortie partielle, planifie un réessayage automatique en respectant le délai."
+    server: "Renvoie HTTP 429 + retry-after: 1, simulant une limitation de débit. Chaque requête renvoie 429.",
+    client: "Analyse l'en-tête retry-after, effectue des tentatives limitées dans la fenêtre sûre avant le premier token, renvoie exhausted une fois épuisé."
   },
   "overloaded-retry-after": {
-    server: "Renvoie une erreur HTTP 529 avant le premier jeton, avec une en-tête retry-after de 1s.",
-    client: "Identifié comme overloaded. Sans sortie partielle, tente un réessayage automatique."
+    server: "Renvoie HTTP 529 + retry-after: 1, simulant une surcharge du fournisseur.",
+    client: "Classifie 529 comme overloaded, la logique de tentative reproduit le scénario de limitation de débit."
   },
   "server-error": {
-    server: "Renvoie directement une erreur HTTP 500 avant d'envoyer le premier jeton.",
-    client: "Identifié comme server_error. Sans sortie partielle, permet un réessayage automatique après un délai de sécurité."
+    server: "Renvoie HTTP 500 sans en-tête retry-after, simulant un crash serveur générique.",
+    client: "Classifie comme server_error, utilise une tentative locale à repli exponentiel + jitter, n'enregistre pas honored_retry_after."
   },
   "midstream-close": {
-    server: "Envoie les deux premiers fragments de texte, puis ferme brutalement le socket TCP sans signal de fin.",
-    client: "Détecte la déconnexion. Protège la sortie partielle existante, supprime les réessayages automatiques, renvoie partial_returned."
+    server: "Envoie 2 fragments de texte puis détruit le socket sans envoyer d'événement de fin de protocole. Simule une interruption réseau ou un crash du fournisseur.",
+    client: "Le SDK capture l'erreur de connexion, le Runner attache l'état partiel accumulé, la stratégie préserve le texte partiel et supprime les tentatives automatiques."
   },
   "half-sse-frame": {
-    server: "Écrit une trame SSE incomplète (par ex. data: {\"cho) puis détruit immédiatement le socket.",
-    client: "Détecte une erreur d'analyse. Classifie en malformed_stream et entre en safe_failure pour éviter les réessais infinis."
+    server: "Écrit une trame SSE incomplète (JSON tronqué + aucun séparateur) puis détruit le socket. Simule des données de protocole incomplètes d'un crash du fournisseur.",
+    client: "Échec sûr explicite : blocked_malformed_stream quand le SDK signale une erreur, blocked_malformed_empty_stream quand le SDK renvoie un texte vide. Aucune tentative."
   },
   "silent-hang": {
-    server: "Établit la connexion, envoie les en-têtes, puis se suspend indéfiniment sans envoyer de texte ni de ping.",
-    client: "Dépasse idleTimeoutMs. Déclenche le minuteur d'inactivité, annule la requête et classifie en aborted_idle_timeout."
+    server: "Envoie la trame de départ du protocole puis n'envoie plus rien, gardant la connexion jusqu'à la fermeture par le client. Simule un gel du fournisseur ou une passerelle maintenant la connexion.",
+    client: "Annule via idle timeout (aucun rafraîchissement d'événement) ou wall timeout (temps total dépassé), classifié comme idle_timeout."
   },
   "heartbeat-only": {
-    server: "Garde la connexion ouverte mais envoie uniquement des pings sans contenu textuel utile.",
-    client: "Reconnait que les pings ne contiennent pas de texte. Déclenche un timeout par manque de contenu et annule le flux."
+    server: "Envoie uniquement des événements heartbeat/ping, aucun delta de texte. Simule une connexion vivante mais le modèle n'a pas commencé à générer.",
+    client: "Ne traite pas les heartbeats comme du texte métier. Rafraîchit le timer idle seulement si le SDK expose les heartbeats comme événements. Termine par timeout ou chemin texte vide."
   },
   "half-tool-json": {
-    server: "Diffuse un JSON de paramètres d'outil incomplet, puis ferme brutalement le socket.",
-    client: "Bloque l'exécution de l'outil pour éviter des effets secondaires, marquant safe_failure."
+    server: "Envoie l'événement de début d'appel d'outil + paramètre incomplet {\"city\":\"Par puis détruit le socket. Simule un crash du fournisseur en plein appel d'outil.",
+    client: "Identifie le JSON d'outil tronqué comme limite de sécurité : n'exécute pas l'outil, ne tente pas comme erreur réseau générique, safe_failure directe."
   },
   "flood": {
-    server: "Envoie 250 fragments de texte à haute fréquence sans délai.",
-    client: "Teste la capacité du client à consommer des deltas rapides sans perte de trames."
+    server: "Envoie rapidement 250 fragments (un toutes les 5ms), simulant un débit élevé du fournisseur.",
+    client: "Le Runner consomme tous les fragments en continu, vérifiant l'absence de perte de données. Aucune contre-pression sans budget d'événements."
   },
   "bounded-queue-overflow": {
-    server: "Diffuse rapidement de nombreux fragments, dépassant le budget d'événements du client.",
-    client: "Déclenche la protection anti-surpression. Annule la connexion pour protéger la mémoire, marquant safe_failure."
+    server: "Envoie rapidement 250 fragments, identique à flood. La faute n'est pas côté serveur mais dans le budget de contre-pression client (--max-stream-events 100).",
+    client: "Détecte que le nombre d'événements dépasse la limite du budget, annule proactivement la consommation et échoue en sécurité. La protection contre-pression prime sur le succès de la sortie."
   },
   "consumer-drop": {
-    server: "Diffuse normalement jusqu'à ce que le consommateur en aval annule la connexion.",
-    client: "Annule la connexion du flux, classifié en consumer_cancelled. Ne tente pas de réessayage."
+    server: "La faute est le consommateur (utilisateur ferme la page, l'UI arrête de lire), pas le serveur. Le comportement serveur reflète midstream-close (2 fragments puis déconnexion).",
+    client: "Identifie l'annulation du consommateur via le drapeau de scénario ou le message d'erreur, ne crée pas de nouvelles requêtes fournisseur."
   },
   "fallback-recovery": {
-    server: "Le modèle principal renvoie une erreur HTTP 529; le modèle de secours fonctionne normalement.",
-    client: "Échoue sur le modèle principal avant jeton. Redirige automatiquement la requête vers fallbackModel (recovered)."
+    server: "Renvoie 529 pour le modèle principal, normal pour le modèle de secours. Simule la surcharge du fournisseur principal avec une sauvegarde disponible.",
+    client: "Après épuisement des tentatives, vérifie qu'il n'y a pas de partiel, bascule vers le modèle de secours et relance la requête, signale recovered en cas de succès."
   },
   "circuit-breaker-open": {
-    server: "Renvoie systématiquement une erreur HTTP 529.",
-    client: "Ouvre le disjoncteur (circuit_opened) après plusieurs échecs consécutifs, bloquant les requêtes en aval."
+    server: "Renvoie systématiquement 529. Mais le vrai rôle du disjoncteur est le preflight côté client : les requêtes ultérieures sont bloquées avant d'atteindre le serveur.",
+    client: "Ouvre le disjoncteur après épuisement des tentatives, écrit dans la Map du processus. Les requêtes ultérieures pour la même clé fournisseur renvoient circuit_opened au preflight."
   },
   "provider-cooldown": {
-    server: "Renvoie systématiquement une erreur HTTP 529.",
-    client: "Active le cooldown du fournisseur après échecs répétés, bloquant temporairement les appels à ce fournisseur."
+    server: "Renvoie systématiquement 529. Similaire au disjoncteur mais le cooldown signifie sémantiquement « taux de requêtes trop élevé, nécessite un refroidissement ».",
+    client: "Ouvre le cooldown après épuisement des tentatives. Les requêtes ultérieures pour la même clé fournisseur sont bloquées au preflight, renvoyant cooldown_opened."
   },
   "background-overloaded": {
-    server: "Renvoie une erreur de surcharge HTTP 529.",
-    client: "Détecte une requête d'arrière-plan en surcharge. L'annule immédiatement pour économiser les ressources."
+    server: "Renvoie 529 + retry-after: 1. La faute est identique à overloaded-retry-after.",
+    client: "Détecte la priorité arrière-plan + erreur overloaded, abandonne la tâche d'arrière-plan immédiatement pour préserver le budget fournisseur des requêtes d'avant-plan."
   },
   "context-overflow": {
-    server: "Rejette la requête car le contexte dépasse la longueur maximale autorisée.",
-    client: "Reconnait context_overflow. Supprime les réessais et indique context_compaction_required."
+    server: "Renvoie HTTP 400 + context_length_exceeded, simulant le fournisseur rejetant un contexte trop volumineux.",
+    client: "Identifie comme context_overflow, ne tente pas (la même tentative échouerait à nouveau), nécessite une compaction de contexte en amont."
   },
   "session-lock-conflict": {
-    server: "Reçoit des requêtes.",
-    client: "Détecte des requêtes simultanées sous le même sessionId. Bloque l'appel (session_locked) pour éviter les corruptions."
+    server: "Aucune faute serveur. La faute est l'état local côté client : la même session a déjà une requête active, conflit concurrent.",
+    client: "Le preflight vérifie activeSessionLocks, trouve la session occupée, n'appelle pas le Runner SDK, renvoie directement session_locked."
   },
   "max-turns-exceeded": {
-    server: "Simule la réception de requêtes.",
-    client: "Bloque l'appel d'API (max_turns_exceeded) car le nombre de tours (currentTurn) dépasse le maximum autorisé."
+    server: "Aucune faute serveur. La faute est l'état local côté client : la boucle Agent a atteint le nombre maximum de tours configuré.",
+    client: "Le preflight vérifie currentTurn > maxTurns, termine avant d'entrer dans le Runner SDK, renvoie max_turns_exceeded."
   }
 };
 
 const scenarioBehaviorsRu: Record<ScenarioName, ScenarioBehavior> = {
   "normal": {
-    server: "Равномерно отправляет полные текстовые фрагменты потока и завершает сессию нормальным сигналом [DONE].",
-    client: "Корректно собирает текст, регистрирует действие tracked_output и возвращает успешный статус completed."
+    server: "Нет неисправности. Сервер нормально отправляет полный потоковый ответ.",
+    client: "Потребляет все фрагменты, накапливает текст и сообщает об успехе."
   },
   "slow": {
-    server: "Отправляет фрагменты текста с задержкой в 150 мс между каждым пакетом, затем шлет [DONE].",
-    client: "Использует idleTimeoutMs как максимальное ожидание между фрагментами и сбрасывает этот таймер при каждом событии. wallTimeoutMs остается общим жестким лимитом attempt; при соблюдении обоих бюджетов возвращается completed_slow."
+    server: "Увеличивает интервал между фрагментами с 5мс до 150мс, имитируя медленный ответ провайдера.",
+    client: "Использует wall/idle тайм-аут для различения «нормально медленно» и «требуется прерывание». Позволяет медленному потоку завершиться в бюджете; при превышении — abort."
   },
   "rate-limit-retry-after": {
-    server: "Возвращает HTTP 429 перед первым токеном, прикрепляя заголовок retry-after: 1 сек.",
-    client: "Классифицирует как rate_limited. Так как вывода еще нет, планирует автоповтор с учетом времени ожидания."
+    server: "Возвращает HTTP 429 + retry-after: 1, имитируя ограничение скорости провайдера. Каждый запрос возвращает 429.",
+    client: "Разбирает заголовок retry-after, выполняет ограниченные попытки в безопасном окне до первого токена, возвращает exhausted при исчерпании."
   },
   "overloaded-retry-after": {
-    server: "Возвращает HTTP 529 перед первым токеном, прикрепляя заголовок retry-after: 1 сек.",
-    client: "Классифицирует как overloaded. Без частичного вывода пытается выполнить автоматический повторный запрос."
+    server: "Возвращает HTTP 529 + retry-after: 1, имитируя перегрузку провайдера.",
+    client: "Классифицирует 529 как overloaded, логика повторения аналогична сценарию ограничения скорости."
   },
   "server-error": {
-    server: "Возвращает HTTP 500 перед отправкой первого токена.",
-    client: "Классифицирует как server_error. При отсутствии частичного вывода выполняет повтор после безопасного интервала."
+    server: "Возвращает HTTP 500 без заголовка retry-after, имитируя общий сбой сервера.",
+    client: "Классифицирует как server_error, использует локальный экспоненциальный откат + jitter повтор, не записывает honored_retry_after."
   },
   "midstream-close": {
-    server: "Отправляет первые два фрагмента, затем резко обрывает TCP-соединение без отправки завершающего токена.",
-    client: "Обнаруживает разрыв соединения. Сохраняет частичный вывод, блокирует повторы/резервы, возвращает partial_returned."
+    server: "Отправляет 2 текстовых фрагмента, затем уничтожает сокет без отправки завершающего события протокола. Имитирует прерывание сети или сбой процесса провайдера.",
+    client: "SDK фиксирует ошибку соединения, Runner прикрепляет накопленное частичное состояние, стратегия сохраняет частичный текст и подавляет автоповтор."
   },
   "half-sse-frame": {
-    server: "Отправляет неполный пакет SSE (например, data: {\"cho) и сразу уничтожает сокет.",
-    client: "Обнаруживает ошибку парсинга. Классифицирует как malformed_stream и переходит в safe_failure во избежание бесконечных повторов."
+    server: "Записывает неполный кадр SSE (усечённый JSON + без разделителя) и уничтожает сокет. Имитирует неполные данные протокола при сбое провайдера.",
+    client: "Явный безопасный отказ: blocked_malformed_stream при ошибке SDK, blocked_malformed_empty_stream при пустом тексте SDK. Повторы не выполняются."
   },
   "silent-hang": {
-    server: "Устанавливает соединение, отправляет заголовки, затем зависает без отправки текста или пингов.",
-    client: "Превышает idleTimeoutMs. Таймер простоя отменяет запрос, переводя его в состояние aborted_idle_timeout."
+    server: "Отправляет начальное событие протокола, затем прекращает отправку, сохраняя соединение до закрытия клиентом. Имитирует зависание провайдера или шлюз, удерживающий соединение.",
+    client: "Прерывает через idle timeout (нет обновления событий) или wall timeout (превышено общее время), классифицируется как idle_timeout."
   },
   "heartbeat-only": {
-    server: "Поддерживает соединение, но шлет только пинги/пинг-понги без реального текста.",
-    client: "Определяет, что пинги не несут полезной нагрузки. Превышает лимит времени простоя и отменяет соединение."
+    server: "Отправляет только события heartbeat/ping без текстовых инкрементов. Имитирует живое соединение, но модель не начала генерацию.",
+    client: "Не считает heartbeat-события бизнес-текстом. Обновляет idle-таймер только если SDK экспонирует heartbeat как события. Завершается через тайм-аут или путь пустого текста."
   },
   "half-tool-json": {
-    server: "Отправляет неполный JSON аргументов функции инструмента, затем обрывает сокет.",
-    client: "Блокирует выполнение вызова инструмента для предотвращения побочных эффектов, переводя в статус safe_failure."
+    server: "Отправляет начальное событие вызова инструмента + неполное содержимое параметра и уничтожает сокет. Имитирует сбой провайдера во время вызова инструмента.",
+    client: "Определяет усечённый JSON инструмента как границу безопасности: не выполняет инструмент, не повторяет как общую сетевую ошибку, прямой safe_failure."
   },
   "flood": {
-    server: "Отправляет 250 небольших фрагментов текста с высокой частотой без задержки.",
-    client: "Проверяет способность клиента обрабатывать быстрый поток дельт без пропуска пакетов."
+    server: "Быстро отправляет 250 фрагментов (один каждые 5мс), имитируя высокую пропускную способность провайдера.",
+    client: "Runner непрерывно потребляет все фрагменты, проверяя отсутствие потерь данных. Нет обратного давления без установленного бюджета событий."
   },
   "bounded-queue-overflow": {
-    server: "Быстро шлет множество фрагментов, превышая лимит событий буфера клиента.",
-    client: "Запускает защиту от переполнения. Прерывает соединение для защиты памяти, возвращая статус safe_failure."
+    server: "Быстро отправляет 250 фрагментов, как и flood. Неисправность не на сервере, а в клиентском бюджете обратного давления (--max-stream-events 100).",
+    client: "Обнаруживает превышение лимита бюджета событий, проактивно отменяет потребление и безопасно отказывает. Защита от перегрузки приоритетнее успеха вывода."
   },
   "consumer-drop": {
-    server: "Передает текстовые дельты до тех пор, пока клиентский потребитель не разорвет соединение.",
-    client: "Отменяет соединение потока, возвращая статус consumer_cancelled. Не выполняет повторных попыток."
+    server: "Неисправность на стороне потребителя (пользователь закрыл страницу, UI перестал читать), а не на сервере. Поведение сервера аналогично midstream-close (2 фрагмента, затем отключение).",
+    client: "Определяет отмену потребителя через флаг сценария или сообщение об ошибке, не создаёт новых запросов к провайдеру."
   },
   "fallback-recovery": {
-    server: "Основная модель возвращает ошибку HTTP 529; резервная работает нормально.",
-    client: "Падает на основной модели до токена. Автоматически перенаправляет запрос на fallbackModel (recovered)."
+    server: "Возвращает 529 для основной модели, нормально для резервной. Имитирует перегрузку основного провайдера при доступном резерве.",
+    client: "После исчерпания повторов проверяет отсутствие частичного вывода, переключается на резервную модель и повторно отправляет запрос, при успехе сообщает recovered."
   },
   "circuit-breaker-open": {
-    server: "Стабильно возвращает HTTP 529.",
-    client: "Открывает автоматический прерыватель (circuit_opened) после серии неудач, предотвращая лавину повторных запросов."
+    server: "Постоянно возвращает 529. Но настоящая роль предохранителя — preflight на стороне клиента: последующие запросы блокируются до достижения сервера.",
+    client: "Открывает предохранитель после исчерпания повторов, записывает в Map процесса. Последующие запросы для того же ключа провайдера возвращают circuit_opened на этапе preflight."
   },
   "provider-cooldown": {
-    server: "Стабильно возвращает HTTP 529.",
-    client: "Вводит время остывания провайдера после серии сбоев, временно блокируя обращения к нему."
+    server: "Постоянно возвращает 529. Аналогично предохранителю, но cooldown семантически означает «слишком высокая скорость запросов, требуется охлаждение».",
+    client: "Открывает cooldown после исчерпания повторов. Последующие запросы для того же ключа провайдера блокируются на preflight, возвращая cooldown_opened."
   },
   "background-overloaded": {
-    server: "Возвращает ответ перегрузки HTTP 529.",
-    client: "Обнаруживает фоновый запрос при перегрузке. Немедленно отменяет его для экономии ресурсов."
+    server: "Возвращает 529 + retry-after: 1. Неисправность идентична overloaded-retry-after.",
+    client: "Обнаруживает фоновый приоритет + ошибку overloaded, немедленно отбрасывает фоновую задачу для сохранения бюджета провайдера запросов переднего плана."
   },
   "context-overflow": {
-    server: "Отклоняет запрос, так как входной контекст превышает максимальную длину.",
-    client: "Распознает context_overflow. Отменяет повторы и запрашивает сжатие контекста context_compaction_required."
+    server: "Возвращает HTTP 400 + context_length_exceeded, имитируя отклонение провайдером слишком большого контекста.",
+    client: "Определяет как context_overflow, не повторяет (повторный запрос снова потерпит неудачу), требует сжатия контекста на верхнем уровне."
   },
   "session-lock-conflict": {
-    server: "Принимает входящие запросы.",
-    client: "Обнаруживает параллельный запрос под тем же sessionId. Блокирует вызов (session_locked) для защиты истории сессии."
+    server: "Нет неисправности сервера. Неисправность — локальное состояние клиента: в той же сессии уже есть активный запрос, конфликт параллелизма.",
+    client: "preflight проверяет activeSessionLocks, обнаруживает занятую сессию, не вызывает SDK Runner, напрямую возвращает session_locked."
   },
   "max-turns-exceeded": {
-    server: "Имитирует прием запросов.",
-    client: "Блокирует вызов API (max_turns_exceeded), так как текущий шаг currentTurn превышает порог maxTurns."
+    server: "Нет неисправности сервера. Неисправность — локальное состояние клиента: цикл Agent достиг настроенного максимального числа оборотов.",
+    client: "preflight проверяет currentTurn > maxTurns, завершает до входа в SDK Runner, возвращает max_turns_exceeded."
   }
 };
 
@@ -675,61 +675,69 @@ const translations = {
 const categoryTranslations: Record<"en" | "zh" | "fr" | "ru", Record<string, string>> = {
   en: {
     baseline: "Baseline & Normal",
-    connection: "Pre-Token & Connection Errors",
-    midstream: "Mid-Stream & SSE Failures",
-    backpressure: "Backpressure & Cancel",
-    resilience: "Resilience & Circuit Breakers",
-    preflight: "Client-Side Preflight"
+    "pre-token": "Pre-Token Errors",
+    "stream-interruption": "Stream Interruption",
+    malformed: "Malformed Frames",
+    "hung-stream": "Hung Streams & Heartbeats",
+    "tool-call": "Incomplete Tool Calls",
+    backpressure: "Backpressure & Queue Overflow",
+    "agent-safety": "Agent Self-Protection"
   },
   zh: {
     baseline: "基准与正常场景",
-    connection: "首包前与连接错误",
-    midstream: "流式传输中故障",
-    backpressure: "背压与取消控制",
-    resilience: "弹性策略与熔断",
-    preflight: "客户端 Preflight 检查"
+    "pre-token": "首 Token 前错误",
+    "stream-interruption": "流中断",
+    malformed: "畸形帧",
+    "hung-stream": "挂起流与心跳流",
+    "tool-call": "半截工具调用",
+    backpressure: "背压保护与队列溢出",
+    "agent-safety": "Agent 自保场景"
   },
   fr: {
     baseline: "Base & Normal",
-    connection: "Erreurs Pre-Token & Connexion",
-    midstream: "Pannes en Cours de Flux",
-    backpressure: "Contre-Pression & Annulation",
-    resilience: "Résilience & Disjoncteurs",
-    preflight: "Preflight du Client"
+    "pre-token": "Erreurs Pre-Token",
+    "stream-interruption": "Interruption de Flux",
+    malformed: "Trames Malformées",
+    "hung-stream": "Flux Suspendus & Signaux de Vie",
+    "tool-call": "Appels d'Outils Incomplets",
+    backpressure: "Contre-Pression & File d'Attente",
+    "agent-safety": "Auto-Protection de l'Agent"
   },
   ru: {
     baseline: "Базовые и Нормальные",
-    connection: "Ошибки до Первого Токена",
-    midstream: "Сбои в процессе Стриминга",
-    backpressure: "Обратное Давление и Отмена",
-    resilience: "Устойчивость и Предохранители",
-    preflight: "Клиентские проверки Preflight"
+    "pre-token": "Ошибки до Первого Токена",
+    "stream-interruption": "Прерывание Стрима",
+    malformed: "Повреждённые Кадры",
+    "hung-stream": "Зависшие Стримы и Сердцебиения",
+    "tool-call": "Незавершённые Вызовы Инструментов",
+    backpressure: "Обратное Давление и Очередь",
+    "agent-safety": "Самозащита Агента"
   }
 };
 
-const categoryKeys = ["baseline", "connection", "midstream", "backpressure", "resilience", "preflight"] as const;
+const categoryKeys = ["baseline", "pre-token", "stream-interruption", "malformed", "hung-stream", "tool-call", "backpressure", "agent-safety"] as const;
 
 const scenarioCategoryMap: Record<ScenarioName, typeof categoryKeys[number]> = {
   normal: "baseline",
   slow: "baseline",
   flood: "baseline",
-  "rate-limit-retry-after": "connection",
-  "overloaded-retry-after": "connection",
-  "server-error": "connection",
-  "midstream-close": "midstream",
-  "half-sse-frame": "midstream",
-  "silent-hang": "midstream",
-  "heartbeat-only": "midstream",
-  "half-tool-json": "midstream",
+  "rate-limit-retry-after": "pre-token",
+  "overloaded-retry-after": "pre-token",
+  "server-error": "pre-token",
+  "midstream-close": "stream-interruption",
+  "consumer-drop": "stream-interruption",
+  "half-sse-frame": "malformed",
+  "silent-hang": "hung-stream",
+  "heartbeat-only": "hung-stream",
+  "half-tool-json": "tool-call",
   "bounded-queue-overflow": "backpressure",
-  "consumer-drop": "backpressure",
-  "fallback-recovery": "resilience",
-  "circuit-breaker-open": "resilience",
-  "provider-cooldown": "resilience",
-  "background-overloaded": "resilience",
-  "context-overflow": "preflight",
-  "session-lock-conflict": "preflight",
-  "max-turns-exceeded": "preflight"
+  "fallback-recovery": "agent-safety",
+  "circuit-breaker-open": "agent-safety",
+  "provider-cooldown": "agent-safety",
+  "background-overloaded": "agent-safety",
+  "context-overflow": "agent-safety",
+  "session-lock-conflict": "agent-safety",
+  "max-turns-exceeded": "agent-safety"
 };
 
 const scenarioTranslations: Record<"en" | "zh" | "fr" | "ru", Record<ScenarioName, { name: string; description: string }>> = {
