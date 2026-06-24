@@ -25,6 +25,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listScenarios } from "../../shared/scenarios.js";
 import { orderTraceEvents, type TraceEvent } from "../../shared/trace.js";
 import type { Protocol, RunOptions, ScenarioName, RunOutcome } from "../../shared/types.js";
+import { desktopBuildVersion } from "../buildInfo.js";
 import type { DesktopApi, ServerStatus } from "../types.js";
 
 declare global {
@@ -1343,7 +1344,7 @@ export function App() {
         <div className="topbar-brand">
           <Activity size={18} className="topbar-logo" />
           <h1>{t.title}</h1>
-          <span>V2.0</span>
+          <span>{desktopBuildVersion}</span>
         </div>
 
         <div className="topbar-controls">

@@ -47,6 +47,8 @@ describe("desktop app", () => {
     expect(screen.getByText("Server")).toBeTruthy();
     expect(screen.getByText("Client")).toBeTruthy();
     expect(screen.getByText("Inspector")).toBeTruthy();
+    expect(screen.getByText("srl-dev")).toBeTruthy();
+    expect(screen.queryByText("V2.0")).toBeNull();
   });
 
   it("offers every shared scenario and runs the selected scenario", async () => {

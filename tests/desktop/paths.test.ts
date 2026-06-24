@@ -20,6 +20,7 @@ describe("desktop path resolution", () => {
 
     expect(paths.indexPath).toBe("C:\\Users\\feuye\\AppData\\Local\\Programs\\Stream Resilience Debugger\\resources\\app.asar\\dist\\desktop-renderer\\index.html");
     expect(paths.preloadPath).toBe("C:\\Users\\feuye\\AppData\\Local\\Programs\\Stream Resilience Debugger\\resources\\app.asar\\dist-electron\\preload.cjs");
-    expect(paths.serverPath).toBe("C:\\Users\\feuye\\AppData\\Local\\Programs\\Stream Resilience Debugger\\resources\\app.asar\\dist-electron\\server.mjs");
+    expect(paths.serverPath).toBe("C:\\Users\\feuye\\AppData\\Local\\Programs\\Stream Resilience Debugger\\resources\\app.asar\\dist-electron\\server.cjs");
+    expect(paths.serverCwd).toBe("C:\\Users\\feuye\\AppData\\Local\\Programs\\Stream Resilience Debugger\\resources");
   });
 });

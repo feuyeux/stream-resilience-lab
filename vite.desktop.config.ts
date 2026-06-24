@@ -5,6 +5,9 @@ export default defineConfig({
   plugins: [react()],
   root: ".",
   base: "./",
+  define: {
+    __SRL_BUILD_VERSION__: JSON.stringify(process.env.SRL_BUILD_VERSION ?? "srl-dev")
+  },
   build: {
     outDir: "dist/desktop-renderer",
     emptyOutDir: true

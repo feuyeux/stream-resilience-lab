@@ -48,7 +48,7 @@ async function startServer(): Promise<ServerStatus> {
     ? [assetPaths.serverPath]
     : ["--import", "tsx", "src/server/index.ts"];
   serverProcess = spawn(process.execPath, serverArgs, {
-    cwd: projectRoot,
+    cwd: assetPaths.serverCwd,
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",

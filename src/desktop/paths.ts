@@ -1,4 +1,4 @@
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 export interface ProjectRootOptions {
   cwd?: string;
@@ -22,6 +22,7 @@ export interface DesktopAssetPaths {
   indexPath: string;
   preloadPath: string;
   serverPath: string;
+  serverCwd: string;
 }
 
 export function resolveDesktopAssetPaths(options: DesktopAssetPathOptions): DesktopAssetPaths {
@@ -36,7 +37,8 @@ export function resolveDesktopAssetPaths(options: DesktopAssetPathOptions): Desk
         : join(options.projectRoot, "src", "desktop", "preload.ts")
     ),
     serverPath: options.packaged
-      ? join(options.mainDir, "server.mjs")
-      : join(options.projectRoot, "src", "server", "index.ts")
+      ? join(options.mainDir, "server.cjs")
+      : join(options.projectRoot, "src", "server", "index.ts"),
+    serverCwd: options.packaged ? dirname(options.projectRoot) : options.projectRoot
   };
 }
