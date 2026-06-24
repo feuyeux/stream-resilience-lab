@@ -2,6 +2,8 @@
 
 本文档是 Stream Resilience Lab 的完整实验手册，逐一展开 20 个故障场景（S01–S20）和 45 个冒烟用例（UC001–UC045）的实验步骤、原理阐述与预期行为。每个场景均覆盖：服务端仿真原理、SDK 暴露面、客户端策略决策逻辑、预期 Trace 时间线和最终 `RunOutcome`。
 
+每个场景都明确标注了**故障方**（谁制造了故障）和**容错方**（谁做出了应对决策）。故障方可能是服务端（`fault-provider` 模拟的 LLM provider）、消费端（用户/UI）或客户端本地状态；容错方始终是 `resilience-runner` 的策略层（`policy.ts` + SDK Runners）。
+
 ---
 
 ## 0. 实验前置
@@ -73,6 +75,21 @@ CLI (cli.ts)
 
 **核心原理**：客户端策略层（`policy.ts`）不直接读 HTTP body 或 SSE 帧。它只消费 Runner 产出的 `SdkRunResult`（成功时）或 Runner 附加了 `partialText`/`partialToolJson` 的错误（失败时）。真正面对服务端响应格式的是三个 SDK Runner；真正决定能不能重试、是否返回 partial、是否安全失败的是 `policy.ts`。
 
+### 0.6 故障方与容错方模型
+
+本实验的核心是两个角色的对抗：
+
+| 角色 | 代码位置 | 职责 |
+|---|---|---|
+| **故障方**（Fault Provider） | `src/server/scenarioEngine.ts` | 模拟 LLM provider 的各种故障行为：HTTP 错误码、畸形 SSE、断流、挂起、过载等 |
+| **容错方**（Resilience Client） | `src/client/resilience/policy.ts` + SDK Runners | 消费 SDK 暴露的错误/partial，决策重试、保留 partial、安全失败、熔断、降级等 |
+
+每个场景都属于以下三类之一：
+
+1. **服务端注入故障**：故障方是 `fault-provider`。服务端主动返回错误码、畸形帧或断流。容错方在客户端策略层做出应对。覆盖大多数场景（S02–S18）。
+2. **客户端 preflight 拦截**：故障方不在服务端，而是客户端检测到本地条件（会话锁冲突、轮次超限、熔断器已打开）后在进入 SDK Runner 前主动拦截。服务端可能根本不会被调用。覆盖 S15、S16、S19、S20。
+3. **无故障基线**：服务端正常返回，容错方正常消费。作为对照基线。覆盖 S01、S02、S03。
+
 ---
 
 ## 1. 正常与压力基线
@@ -82,6 +99,10 @@ CLI (cli.ts)
 **场景编号**：S01  
 **阶段**：正常  
 **是否进入 Smoke**：是（UC001 / UC016 / UC031）
+
+| 故障方 | 容错方 |
+|---|---|
+| 无故障。服务端正常发送完整流式响应。 | 客户端正常消费所有 chunk，累积文本，报告成功。 |
 
 #### 实验目的
 
@@ -164,6 +185,10 @@ npm run resilience-runner -- anthropic "hello" normal 3000
 **阶段**：正常慢流  
 **是否进入 Smoke**：否（仅单场景命令）
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端将 chunk 间隔从 5ms 提升到 150ms，模拟 provider 响应缓慢。 | 客户端用 wall/idle timeout 区分“正常慢”和“需要中止的超时”。在预算内允许慢流完成；超出则 abort。 |
+
 #### 实验目的
 
 验证客户端能否区分"正常但慢的流"与"需要中止的超时流"。核心在于理解 `wallTimeoutMs`（总时限硬上限）和 `idleTimeoutMs`（相邻两批流事件之间的空闲预算）的独立作用。
@@ -221,6 +246,10 @@ npm run resilience-runner -- openai-chat "hello" slow 100
 **阶段**：压力变体  
 **是否进入 Smoke**：否（仅单场景命令）
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端快速发送 250 个 chunk（每 5ms 一个），模拟 provider 高吞吐量输出。 | 客户端 Runner 持续消费所有 chunk，验证不因高频而丢数据。未设事件预算时无背压干预。 |
+
 #### 实验目的
 
 验证 SDK 和 Runner 能否持续消费大量高频增量而不丢数据、不崩溃。与 S12 `bounded-queue-overflow` 形成对照：`flood` 不设事件预算上限，只验证消费能力。
@@ -265,6 +294,10 @@ npm run resilience-runner -- openai-chat "hello" flood 3000
 **场景编号**：S04  
 **阶段**：首 token 前  
 **是否进入 Smoke**：是（UC002 / UC017 / UC032）
+
+| 故障方 | 容错方 |
+|---|---|
+| 服务端返回 HTTP 429 + `retry-after: 1`，模拟 provider 限流。每次请求都返回 429，不释放。 | 客户端解析 `retry-after` header，在首 token 前安全窗口内有限重试，耗尽后返回 `exhausted`。 |
 
 #### 实验目的
 
@@ -347,6 +380,10 @@ npm run resilience-runner -- anthropic "hello" rate-limit-retry-after 3000
 **阶段**：首 token 前  
 **是否进入 Smoke**：否（仅单场景命令）
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端返回 HTTP 529 + `retry-after: 1`，模拟 provider 过载。 | 客户端将 529 归类为 `overloaded`，重试逻辑与 S04 一致。 |
+
 #### 实验目的
 
 验证 529 过载状态下的有限重试行为。与 S04 对称，区别在于 HTTP 状态码和错误分类。
@@ -388,6 +425,10 @@ npm run resilience-runner -- openai-chat "hello" overloaded-retry-after 3000
 **场景编号**：S06  
 **阶段**：首 token 前  
 **是否进入 Smoke**：否（仅单场景命令）
+
+| 故障方 | 容错方 |
+|---|---|
+| 服务端返回 HTTP 500，无 `retry-after` header，模拟通用服务端崩溃。 | 客户端归类为 `server_error`，走本地指数退避 + jitter 重试，不记录 `honored_retry_after`。 |
 
 #### 实验目的
 
@@ -434,6 +475,10 @@ npm run resilience-runner -- openai-chat "hello" server-error 3000
 **阶段**：流中  
 **是否进入 Smoke**：是（UC003 / UC018 / UC033）  
 **仅流式**：是
+
+| 故障方 | 容错方 |
+|---|---|
+| 服务端发送 2 个文本 chunk 后销毁 socket，不发送协议结束事件。模拟 provider 网络中断或进程崩溃。 | 客户端 SDK 捕获连接错误，Runner 附加已累积的 partial state，策略层保留 partial text 并抑制自动重试。 |
 
 #### 实验目的
 
@@ -504,6 +549,10 @@ npm run resilience-runner -- anthropic "hello" midstream-close 3000
 **是否进入 Smoke**：是（UC008 / UC023 / UC038）  
 **仅流式**：是
 
+| 故障方 | 容错方 |
+|---|---|
+| 故障方是**消费端**（用户关闭页面、UI 停止读取），不是服务端。服务端行为与 S07 相同（发送 2 chunk 后断流）。 | 客户端通过场景标识或错误消息识别为消费端取消，不制造新的 provider 请求。 |
+
 #### 实验目的
 
 验证当消费端（用户关闭页面、UI 停止读取、下游 SSE 客户端断开）不再接收流时，客户端不将其当作模型失败重试，而是识别为消费意图取消。
@@ -555,6 +604,10 @@ npm run resilience-runner -- openai-chat "hello" consumer-drop 3000
 **阶段**：流中  
 **是否进入 Smoke**：是（UC004 / UC019 / UC034）  
 **仅流式**：是
+
+| 故障方 | 容错方 |
+|---|---|
+| 服务端写入半截 SSE 数据帧（不完整 JSON + 无分隔符）后销毁 socket。模拟 provider 崩溃时发出了不完整协议数据。 | 客户端显式安全失败：SDK 报错时 `blocked_malformed_stream`，SDK 返回空文本时 `blocked_malformed_empty_stream`。不重试。 |
 
 #### 实验目的
 
@@ -625,6 +678,10 @@ npm run resilience-runner -- openai-chat "hello" half-sse-frame 3000
 **是否进入 Smoke**：是（UC005 / UC020 / UC035）  
 **仅流式**：是
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端发送协议起始帧后不再发送任何内容，保持连接直到客户端关闭。模拟 provider 卡死或网关保持连接。 | 客户端通过 idle timeout（无事件刷新）或 wall timeout（总时间超限）中止，归类为 `idle_timeout`。 |
+
 #### 实验目的
 
 验证客户端在 provider 保持连接但不发送任何内容时的超时中止行为。
@@ -688,6 +745,10 @@ npm run resilience-runner -- openai-chat "hello" silent-hang 3000
 **是否进入 Smoke**：否（仅单场景命令）  
 **仅流式**：是
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端只发送心跳/ping 事件，不发文本增量。模拟 provider 连接存活但模型未开始生成。 | 客户端不将心跳当作业务文本。若 SDK 暴露心跳为事件则刷新 idle timer，否则不刷新。最终由超时或空文本路径终止。 |
+
 #### 实验目的
 
 验证客户端不将心跳/ping 事件当作有用业务内容。心跳只能证明连接仍有事件流动，不能证明模型正在产生回答。
@@ -746,6 +807,10 @@ npm run resilience-runner -- openai-chat "hello" heartbeat-only 3000
 **阶段**：流中  
 **是否进入 Smoke**：是（UC006 / UC021 / UC036）  
 **仅流式**：是
+
+| 故障方 | 容错方 |
+|---|---|
+| 服务端发送工具调用起始事件 + 不完整参数 `{"city":"Par` 后销毁 socket。模拟 provider 在工具调用中途崩溃。 | 客户端识别半截工具 JSON 为安全底线：不执行工具，不当普通网络错误重试，直接 `safe_failure`。 |
 
 #### 实验目的
 
@@ -819,6 +884,10 @@ npm run resilience-runner -- openai-responses "hello" half-tool-json 3000
 **是否进入 Smoke**：是（UC007 / UC022 / UC037）  
 **仅流式**：是
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端快速发送 250 个 chunk，与 flood 相同。故障不在服务端，而在客户端本地背压预算（`--max-stream-events 100`）。 | 客户端检测到事件数超过预算上限，主动取消消费并安全失败。背压保护优先于输出成功。 |
+
 #### 实验目的
 
 验证客户端的本地背压保护机制：当事件数量超过预算时**主动取消**消费，防止无界队列占用内存或拖垮下游消费端。
@@ -872,6 +941,10 @@ npm run resilience-runner -- openai-chat "hello" bounded-queue-overflow 3000 --m
 **场景编号**：S14  
 **阶段**：首 token 前  
 **是否进入 Smoke**：是（UC009 / UC024 / UC039）
+
+| 故障方 | 容错方 |
+|---|---|
+| 服务端对 primary model 返回 529，对 fallback model 正常返回。模拟 primary provider 过载但备用可用。 | 客户端重试耗尽后检查无 partial，切换到 fallback model 重新发起请求，成功则报告 `recovered`。 |
 
 #### 实验目的
 
@@ -929,6 +1002,10 @@ npm run resilience-runner -- openai-chat "hello" fallback-recovery 3000 --fallba
 **阶段**：首 token 前  
 **是否进入 Smoke**：是（UC010 / UC025 / UC040）
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端持续返回 529。但熔断器的真正作用在客户端 preflight：后续请求在到达服务端前就被拦截。 | 客户端重试耗尽后打开熔断器，写入进程内 Map。后续同一 provider key 的请求在 preflight 阶段直接返回 `circuit_opened`。 |
+
 #### 实验目的
 
 验证连续失败后打开熔断器，阻止后续请求继续打同一个已知失败的 provider。
@@ -984,6 +1061,10 @@ npm run resilience-runner -- openai-chat "hello" circuit-breaker-open 3000
 **阶段**：首 token 前  
 **是否进入 Smoke**：是（UC011 / UC026 / UC041）
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端持续返回 529。与熔断器类似，但 cooldown 语义上表示“请求速率过高需要冷却”。 | 客户端重试耗尽后打开 cooldown，后续同一 provider key 的请求在 preflight 被拦截，返回 `cooldown_opened`。 |
+
 #### 实验目的
 
 验证 provider cooldown 机制——与熔断器类似但语义不同：cooldown 是防 retry storm 的信号，尤其适用于多个会话在同一进程内共用同一 provider/key 的情况。
@@ -1029,6 +1110,10 @@ npm run resilience-runner -- openai-chat "hello" provider-cooldown 3000
 **场景编号**：S17  
 **阶段**：首 token 前  
 **是否进入 Smoke**：是（UC012 / UC027 / UC042）
+
+| 故障方 | 容错方 |
+|---|---|
+| 服务端返回 529 + `retry-after: 1`。故障本身与 S05 相同。 | 客户端检测到优先级为 background + 错误为 overloaded，直接丢弃后台任务，不挤占前台请求的 provider 预算。 |
 
 #### 实验目的
 
@@ -1084,6 +1169,10 @@ npm run resilience-runner -- openai-chat "hello" background-overloaded 3000 --pr
 **阶段**：首 token 前  
 **是否进入 Smoke**：是（UC013 / UC028 / UC043）
 
+| 故障方 | 容错方 |
+|---|---|
+| 服务端返回 HTTP 400 + `context_length_exceeded`，模拟 provider 拒绝过大的上下文。 | 客户端识别为 `context_overflow`，不重试（原样重试必然再次失败），要求上层先执行上下文压缩。 |
+
 #### 实验目的
 
 验证 context overflow 不被当作普通网络错误重试，而是要求上层先压缩上下文。
@@ -1135,6 +1224,10 @@ npm run resilience-runner -- openai-chat "hello" context-overflow 3000
 **场景编号**：S19  
 **阶段**：客户端 preflight  
 **是否进入 Smoke**：是（UC014 / UC029 / UC044）
+
+| 故障方 | 容错方 |
+|---|---|
+| 无服务端故障。故障方是**客户端本地状态**：同一 session 已有请求在进行，并发冲突。 | 客户端 preflight 检查 `activeSessionLocks`，发现 session 已占用，不调用 SDK Runner，直接返回 `session_locked`。 |
 
 #### 实验目的
 
@@ -1191,6 +1284,10 @@ npm run resilience-runner -- openai-chat "hello" session-lock-conflict 3000 --se
 **阶段**：客户端 preflight  
 **是否进入 Smoke**：是（UC015 / UC030 / UC045）
 
+| 故障方 | 容错方 |
+|---|---|
+| 无服务端故障。故障方是**客户端本地状态**：Agent 循环已达到配置的最大轮次。 | 客户端 preflight 检查 `currentTurn > maxTurns`，在进入 SDK Runner 前终止，返回 `max_turns_exceeded`。 |
+
 #### 实验目的
 
 验证 Agent 循环在达到配置的最大轮次时被终止，防止异常导致的无限循环。
@@ -1245,69 +1342,94 @@ npm run resilience-runner -- openai-chat "hello" max-turns-exceeded 3000 --curre
 
 ### 9.1 OpenAI Chat（UC001–UC015）
 
-| 用例 | 场景 | problem.kind | mitigation.actions | status |
-|---|---|---|---|---|
-| UC001 | `normal` | `none` | `tracked_output` | `completed` |
-| UC002 | `rate-limit-retry-after` | `rate_limited` | `retry_before_partial_output, emitted_retry_waiting, honored_retry_after` | `exhausted` |
-| UC003 | `midstream-close` | `stream_interrupted` | `tracked_partial_output, suppressed_retry_after_partial` | `partial_returned` |
-| UC004 | `half-sse-frame` | `malformed_stream` | `blocked_malformed_stream` 或 `blocked_malformed_empty_stream` | `safe_failure` |
-| UC005 | `silent-hang` | `idle_timeout` | `aborted_empty_hanging_stream` | `aborted_content_idle_timeout` |
-| UC006 | `half-tool-json` | `unsafe_partial_tool_call` | `blocked_incomplete_tool_json` 或 `blocked_unobservable_tool_partial` | `safe_failure` |
-| UC007 | `bounded-queue-overflow` | `stream_backpressure` | `cancelled_bounded_queue_overflow` | `safe_failure` |
-| UC008 | `consumer-drop` | `consumer_cancelled` | `cancelled_after_consumer_drop` | `consumer_cancelled` |
-| UC009 | `fallback-recovery` | `none` | `..., used_fallback_model, tracked_output` | `recovered` |
-| UC010 | `circuit-breaker-open` | `overloaded` | `..., opened_circuit_breaker` | `circuit_opened` |
-| UC011 | `provider-cooldown` | `overloaded` | `..., opened_provider_cooldown` | `cooldown_opened` |
-| UC012 | `background-overloaded` | `overloaded` | `dropped_background_overload` | `dropped_background` |
-| UC013 | `context-overflow` | `context_overflow` | `requires_context_compaction` | `context_compaction_required` |
-| UC014 | `session-lock-conflict` | `none`* | `tracked_output`* | `completed`* |
-| UC015 | `max-turns-exceeded` | `max_turns_exceeded` | `stopped_max_turn_loop` | `max_turns_exceeded` |
+| 用例 | 场景 | 故障方 | 容错方 | problem.kind | mitigation.actions | status |
+|---|---|---|---|---|---|---|
+| UC001 | `normal` | 无故障 | 正常消费 | `none` | `tracked_output` | `completed` |
+| UC002 | `rate-limit-retry-after` | 服务端：429 | 解析 retry-after + 有限重试 | `rate_limited` | `retry_before_partial_output, emitted_retry_waiting, honored_retry_after` | `exhausted` |
+| UC003 | `midstream-close` | 服务端：断流 | 保留 partial + 抑制重试 | `stream_interrupted` | `tracked_partial_output, suppressed_retry_after_partial` | `partial_returned` |
+| UC004 | `half-sse-frame` | 服务端：畸形帧 | 安全失败 | `malformed_stream` | `blocked_malformed_stream` 或 `blocked_malformed_empty_stream` | `safe_failure` |
+| UC005 | `silent-hang` | 服务端：挂起 | idle/wall timeout 中止 | `idle_timeout` | `aborted_empty_hanging_stream` | `aborted_content_idle_timeout` |
+| UC006 | `half-tool-json` | 服务端：半截工具 JSON | 不执行 + 安全失败 | `unsafe_partial_tool_call` | `blocked_incomplete_tool_json` 或 `blocked_unobservable_tool_partial` | `safe_failure` |
+| UC007 | `bounded-queue-overflow` | 服务端：250 chunk + 客户端预算 100 | 背压保护取消 | `stream_backpressure` | `cancelled_bounded_queue_overflow` | `safe_failure` |
+| UC008 | `consumer-drop` | 消费端：用户取消 | 识别取消不重试 | `consumer_cancelled` | `cancelled_after_consumer_drop` | `consumer_cancelled` |
+| UC009 | `fallback-recovery` | 服务端：primary 529 | fallback model 恢复 | `none` | `..., used_fallback_model, tracked_output` | `recovered` |
+| UC010 | `circuit-breaker-open` | 服务端：529 + 客户端 preflight | 打开熔断器拦截后续请求 | `overloaded` | `..., opened_circuit_breaker` | `circuit_opened` |
+| UC011 | `provider-cooldown` | 服务端：529 + 客户端 preflight | 打开 cooldown 拦截后续请求 | `overloaded` | `..., opened_provider_cooldown` | `cooldown_opened` |
+| UC012 | `background-overloaded` | 服务端：529 | 丢弃后台任务 | `overloaded` | `dropped_background_overload` | `dropped_background` |
+| UC013 | `context-overflow` | 服务端：400 | 要求上层压缩上下文 | `context_overflow` | `requires_context_compaction` | `context_compaction_required` |
+| UC014 | `session-lock-conflict` | 客户端本地：会话锁* | preflight 拦截* | `none`* | `tracked_output`* | `completed`* |
+| UC015 | `max-turns-exceeded` | 客户端本地：轮次超限 | preflight 终止 | `max_turns_exceeded` | `stopped_max_turn_loop` | `max_turns_exceeded` |
 
 > *UC014 单次运行无并发冲突时正常完成。
 
 ### 9.2 OpenAI Responses（UC016–UC030）
 
-| 用例 | 场景 | 与 OpenAI Chat 差异 |
-|---|---|---|
-| UC016 | `normal` | SSE 使用命名事件 `response.created`/`response.output_text.delta`/`response.completed` |
-| UC017 | `rate-limit-retry-after` | 行为一致 |
-| UC018 | `midstream-close` | partial state 从 `response.output_text.delta` 累积 |
-| UC019 | `half-sse-frame` | 行为一致 |
-| UC020 | `silent-hang` | 行为一致 |
-| UC021 | `half-tool-json` | 工具参数从 `response.function_call_arguments.delta` 累积 |
-| UC022 | `bounded-queue-overflow` | 行为一致 |
-| UC023 | `consumer-drop` | 行为一致 |
-| UC024 | `fallback-recovery` | 行为一致 |
-| UC025 | `circuit-breaker-open` | 行为一致 |
-| UC026 | `provider-cooldown` | 行为一致 |
-| UC027 | `background-overloaded` | 行为一致 |
-| UC028 | `context-overflow` | 行为一致 |
-| UC029 | `session-lock-conflict` | 行为一致 |
-| UC030 | `max-turns-exceeded` | 行为一致 |
+| 用例 | 场景 | 故障方 | 容错方 | 与 OpenAI Chat 差异 |
+|---|---|---|---|---|
+| UC016 | `normal` | 无故障 | 正常消费 | SSE 使用命名事件 `response.created`/`response.output_text.delta`/`response.completed` |
+| UC017 | `rate-limit-retry-after` | 服务端：429 | 解析 retry-after + 有限重试 | 行为一致 |
+| UC018 | `midstream-close` | 服务端：断流 | 保留 partial + 抑制重试 | partial state 从 `response.output_text.delta` 累积 |
+| UC019 | `half-sse-frame` | 服务端：畸形帧 | 安全失败 | 行为一致 |
+| UC020 | `silent-hang` | 服务端：挂起 | idle/wall timeout 中止 | 行为一致 |
+| UC021 | `half-tool-json` | 服务端：半截工具 JSON | 不执行 + 安全失败 | 工具参数从 `response.function_call_arguments.delta` 累积 |
+| UC022 | `bounded-queue-overflow` | 服务端：250 chunk + 客户端预算 | 背压保护取消 | 行为一致 |
+| UC023 | `consumer-drop` | 消费端：用户取消 | 识别取消不重试 | 行为一致 |
+| UC024 | `fallback-recovery` | 服务端：primary 529 | fallback model 恢复 | 行为一致 |
+| UC025 | `circuit-breaker-open` | 服务端：529 + 客户端 preflight | 打开熔断器 | 行为一致 |
+| UC026 | `provider-cooldown` | 服务端：529 + 客户端 preflight | 打开 cooldown | 行为一致 |
+| UC027 | `background-overloaded` | 服务端：529 | 丢弃后台任务 | 行为一致 |
+| UC028 | `context-overflow` | 服务端：400 | 要求上层压缩 | 行为一致 |
+| UC029 | `session-lock-conflict` | 客户端本地：会话锁 | preflight 拦截 | 行为一致 |
+| UC030 | `max-turns-exceeded` | 客户端本地：轮次超限 | preflight 终止 | 行为一致 |
 
 ### 9.3 Anthropic Messages（UC031–UC045）
 
-| 用例 | 场景 | 与 OpenAI Chat 差异 |
-|---|---|---|
-| UC031 | `normal` | SSE 使用 `message_start`/`content_block_start`/`content_block_delta`/`content_block_stop`/`message_delta`/`message_stop` |
-| UC032 | `rate-limit-retry-after` | 行为一致；场景通过 `x-mock-scenario` header 传递（非 body metadata） |
-| UC033 | `midstream-close` | partial state 从 `text_delta` 累积 |
-| UC034 | `half-sse-frame` | 行为一致 |
-| UC035 | `silent-hang` | 行为一致 |
-| UC036 | `half-tool-json` | 工具参数从 `input_json_delta.partial_json` 累积；起始帧使用 `content_block_start`（tool_use 类型） |
-| UC037 | `bounded-queue-overflow` | 行为一致 |
-| UC038 | `consumer-drop` | 行为一致 |
-| UC039 | `fallback-recovery` | 行为一致 |
-| UC040 | `circuit-breaker-open` | 行为一致 |
-| UC041 | `provider-cooldown` | 行为一致 |
-| UC042 | `background-overloaded` | 行为一致 |
-| UC043 | `context-overflow` | 行为一致 |
-| UC044 | `session-lock-conflict` | 行为一致 |
-| UC045 | `max-turns-exceeded` | 行为一致 |
+| 用例 | 场景 | 故障方 | 容错方 | 与 OpenAI Chat 差异 |
+|---|---|---|---|---|
+| UC031 | `normal` | 无故障 | 正常消费 | SSE 使用 `message_start`/`content_block_start`/`content_block_delta`/`content_block_stop`/`message_delta`/`message_stop` |
+| UC032 | `rate-limit-retry-after` | 服务端：429 | 解析 retry-after + 有限重试 | 行为一致；场景通过 `x-mock-scenario` header 传递（非 body metadata） |
+| UC033 | `midstream-close` | 服务端：断流 | 保留 partial + 抑制重试 | partial state 从 `text_delta` 累积 |
+| UC034 | `half-sse-frame` | 服务端：畸形帧 | 安全失败 | 行为一致 |
+| UC035 | `silent-hang` | 服务端：挂起 | idle/wall timeout 中止 | 行为一致 |
+| UC036 | `half-tool-json` | 服务端：半截工具 JSON | 不执行 + 安全失败 | 工具参数从 `input_json_delta.partial_json` 累积；起始帧使用 `content_block_start`（tool_use 类型） |
+| UC037 | `bounded-queue-overflow` | 服务端：250 chunk + 客户端预算 | 背压保护取消 | 行为一致 |
+| UC038 | `consumer-drop` | 消费端：用户取消 | 识别取消不重试 | 行为一致 |
+| UC039 | `fallback-recovery` | 服务端：primary 529 | fallback model 恢复 | 行为一致 |
+| UC040 | `circuit-breaker-open` | 服务端：529 + 客户端 preflight | 打开熔断器 | 行为一致 |
+| UC041 | `provider-cooldown` | 服务端：529 + 客户端 preflight | 打开 cooldown | 行为一致 |
+| UC042 | `background-overloaded` | 服务端：529 | 丢弃后台任务 | 行为一致 |
+| UC043 | `context-overflow` | 服务端：400 | 要求上层压缩 | 行为一致 |
+| UC044 | `session-lock-conflict` | 客户端本地：会话锁 | preflight 拦截 | 行为一致 |
+| UC045 | `max-turns-exceeded` | 客户端本地：轮次超限 | preflight 终止 | 行为一致 |
 
 ---
 
 ## 10. 横向原理总结
+
+### 10.0 故障方与容错方全景总览
+
+| 场景 | 故障方 | 故障手段 | 容错方 | 容错策略 |
+|---|---|---|---|---|
+| S01 `normal` | 无 | 无 | 客户端 | 正常消费 |
+| S02 `slow` | 服务端 | chunk 间隔 150ms | 客户端 | wall/idle timeout 区分正常慢与超时 |
+| S03 `flood` | 服务端 | 250 chunk 快速发送 | 客户端 | 持续消费不丢数据 |
+| S04 `rate-limit-retry-after` | 服务端 | HTTP 429 + retry-after | 客户端 | 解析 header + 有限重试 |
+| S05 `overloaded-retry-after` | 服务端 | HTTP 529 + retry-after | 客户端 | 有限重试 + 退避 |
+| S06 `server-error` | 服务端 | HTTP 500 | 客户端 | 指数退避 + jitter 重试 |
+| S07 `midstream-close` | 服务端 | 2 chunk 后销毁 socket | 客户端 | 保留 partial + 抑制重试 |
+| S08 `half-sse-frame` | 服务端 | 半截 JSON 帧 + 断流 | 客户端 | blocked_malformed + safe_failure |
+| S09 `silent-hang` | 服务端 | 连接保持但不发内容 | 客户端 | idle/wall timeout 中止 |
+| S10 `heartbeat-only` | 服务端 | 只发心跳不发文本 | 客户端 | 心跳不当文本，超时终止 |
+| S11 `half-tool-json` | 服务端 | 半截工具 JSON + 断流 | 客户端 | 不执行 + safe_failure |
+| S12 `bounded-queue-overflow` | 服务端 + 客户端预算 | 250 chunk vs 100 预算 | 客户端 | 背压保护取消 |
+| S13 `consumer-drop` | 消费端 | 用户/UI 断开 | 客户端 | 识别取消不重试 |
+| S14 `fallback-recovery` | 服务端 | primary 返回 529 | 客户端 | fallback model 恢复 |
+| S15 `circuit-breaker-open` | 服务端 + 客户端 preflight | 持续 529 → 熔断打开 | 客户端 preflight | 拦截后续请求 |
+| S16 `provider-cooldown` | 服务端 + 客户端 preflight | 持续 529 → cooldown | 客户端 preflight | 拦截后续请求 |
+| S17 `background-overloaded` | 服务端 | 529 | 客户端 | 丢弃后台任务 |
+| S18 `context-overflow` | 服务端 | HTTP 400 | 客户端 | 要求上层压缩上下文 |
+| S19 `session-lock-conflict` | 客户端本地 | 会话已占用 | 客户端 preflight | 不调用 Runner |
+| S20 `max-turns-exceeded` | 客户端本地 | 轮次超限 | 客户端 preflight | 终止 Agent 循环 |
 
 ### 10.1 错误分类规则
 

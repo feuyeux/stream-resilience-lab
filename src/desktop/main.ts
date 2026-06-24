@@ -1,10 +1,10 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { runDebugSession } from "../client/debug/session.js";
 import type { RunOptions } from "../shared/types.js";
-import { resolveProjectRoot } from "./paths.js";
+import { resolveDesktopAssetPaths, resolveProjectRoot } from "./paths.js";
 import type { ServerStatus } from "./types.js";
 
 const providerUrl = "http://127.0.0.1:3000/v1";
@@ -13,9 +13,7 @@ const rendererDevUrl = "http://127.0.0.1:5173";
 const here = dirname(fileURLToPath(import.meta.url));
 const isPackaged = app.isPackaged;
 const projectRoot = resolveProjectRoot({ cwd: isPackaged ? join(here, "..") : join(here, "..", "..") });
-const preloadPath = process.env.STREAM_RESILIENCE_LAB_PRELOAD ?? (
-  isPackaged ? join(here, "..", "preload.cjs") : join(projectRoot, "src", "desktop", "preload.ts")
-);
+const assetPaths = resolveDesktopAssetPaths({ mainDir: here, packaged: isPackaged, projectRoot });
 
 let mainWindow: BrowserWindow | undefined;
 let serverProcess: ChildProcessWithoutNullStreams | undefined;
@@ -47,7 +45,7 @@ async function startServer(): Promise<ServerStatus> {
   // Reuse Electron's bundled Node (via process.execPath + ELECTRON_RUN_AS_NODE)
   // so we do not require a separate `node` binary on the host PATH.
   const serverArgs = isPackaged
-    ? [join(here, "..", "server.mjs")]
+    ? [assetPaths.serverPath]
     : ["--import", "tsx", "src/server/index.ts"];
   serverProcess = spawn(process.execPath, serverArgs, {
     cwd: projectRoot,
@@ -87,13 +85,12 @@ async function createWindow(): Promise<void> {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: preloadPath
+      preload: assetPaths.preloadPath
     }
   });
 
   if (isPackaged) {
-    const indexPath = join(here, "..", "desktop-renderer", "index.html");
-    await mainWindow.loadFile(indexPath);
+    await mainWindow.loadFile(assetPaths.indexPath);
   } else {
     await mainWindow.loadURL(rendererDevUrl);
   }
