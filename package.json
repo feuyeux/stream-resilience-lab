@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "dist-electron/main.mjs",
   "scripts": {
     "fault-provider": "tsx src/server/index.ts",
     "resilience-runner": "tsx src/client/cli.ts run",
@@ -17,7 +18,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "desktop:dev": "concurrently -n renderer,electron \"vite --config vite.desktop.config.ts\" \"tsx src/desktop/launcher.ts\"",
-    "desktop:build": "vite build --config vite.desktop.config.ts && tsc --noEmit",
+    "desktop:build": "vite build --config vite.desktop.config.ts",
+    "desktop:dist": "tsx scripts/build-desktop.ts",
     "desktop": "npm run desktop:dev"
   },
   "dependencies": {
@@ -40,6 +42,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "electron": "^42.4.1",
+    "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
     "jsdom": "^29.1.1",
     "typescript": "^5.9.3",

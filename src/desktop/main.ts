@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runDebugSession } from "../client/debug/session.js";
 import type { RunOptions } from "../shared/types.js";
 import { resolveProjectRoot } from "./paths.js";
@@ -11,8 +11,11 @@ const providerUrl = "http://127.0.0.1:3000/v1";
 const providerHealthUrl = "http://127.0.0.1:3000/health";
 const rendererDevUrl = "http://127.0.0.1:5173";
 const here = dirname(fileURLToPath(import.meta.url));
-const projectRoot = resolveProjectRoot({ cwd: join(here, "..", "..") });
-const preloadPath = process.env.STREAM_RESILIENCE_LAB_PRELOAD ?? join(projectRoot, "src", "desktop", "preload.ts");
+const isPackaged = app.isPackaged;
+const projectRoot = resolveProjectRoot({ cwd: isPackaged ? join(here, "..") : join(here, "..", "..") });
+const preloadPath = process.env.STREAM_RESILIENCE_LAB_PRELOAD ?? (
+  isPackaged ? join(here, "..", "preload.cjs") : join(projectRoot, "src", "desktop", "preload.ts")
+);
 
 let mainWindow: BrowserWindow | undefined;
 let serverProcess: ChildProcessWithoutNullStreams | undefined;
@@ -43,7 +46,10 @@ async function startServer(): Promise<ServerStatus> {
   publishServerStatus({ state: "starting", url: providerUrl });
   // Reuse Electron's bundled Node (via process.execPath + ELECTRON_RUN_AS_NODE)
   // so we do not require a separate `node` binary on the host PATH.
-  serverProcess = spawn(process.execPath, ["--import", "tsx", "src/server/index.ts"], {
+  const serverArgs = isPackaged
+    ? [join(here, "..", "server.mjs")]
+    : ["--import", "tsx", "src/server/index.ts"];
+  serverProcess = spawn(process.execPath, serverArgs, {
     cwd: projectRoot,
     env: {
       ...process.env,
@@ -85,7 +91,12 @@ async function createWindow(): Promise<void> {
     }
   });
 
-  await mainWindow.loadURL(rendererDevUrl);
+  if (isPackaged) {
+    const indexPath = join(here, "..", "desktop-renderer", "index.html");
+    await mainWindow.loadFile(indexPath);
+  } else {
+    await mainWindow.loadURL(rendererDevUrl);
+  }
 }
 
 ipcMain.handle("server:status", checkServer);

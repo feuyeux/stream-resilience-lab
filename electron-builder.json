@@ -2,11 +2,30 @@
   "appId": "dev.stream-resilience-lab.debugger",
   "productName": "Stream Resilience Debugger",
   "files": [
-    "dist/**",
-    "src/**",
+    "dist/desktop-renderer/**",
+    "dist-electron/**",
     "package.json"
   ],
   "directories": {
     "output": "dist/packages"
+  },
+  "win": {
+    "target": "nsis",
+    "icon": null
+  },
+  "nsis": {
+    "oneClick": false,
+    "perMachine": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "mac": {
+    "target": "dmg",
+    "category": "public.app-category.developer-tools",
+    "icon": null
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "category": "Development",
+    "icon": null
   }
 }

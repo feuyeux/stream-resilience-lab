@@ -33,6 +33,20 @@ The desktop app starts a visual debug surface for running scenarios. It shows a 
 
 ![Stream Resilience Lab desktop debugger showing the two-lane server/client timeline](docs/assets/Screenshot%202026-06-23%20171410.png)
 
+### Build for Distribution
+
+```bash
+npm run desktop:dist
+```
+
+Builds a platform-specific installer in `dist/packages/`:
+
+- **Windows**: NSIS installer (`.exe`)
+- **macOS**: DMG image (run on macOS)
+- **Linux**: AppImage + deb package (run on Linux)
+
+The build bundles the renderer, main process, preload, and fault-provider server so the packaged app runs standalone without external dependencies.
+
 ## Start Fault Provider
 
 ```bash

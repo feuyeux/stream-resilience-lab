@@ -20,6 +20,7 @@ This repository is a TypeScript/Node.js lab for testing SDK client resilience ag
 - `npm run resilience-runner -- openai-chat "hello" midstream-close 3000`: run one client scenario.
 - `npm run resilience:scenarios`: list available failure scenarios.
 - `npm run desktop`: start the Electron/Vite/React desktop debugger.
+- `npm run desktop:dist`: build a cross-platform distributable (NSIS on Windows, DMG on macOS, AppImage/deb on Linux). Output lands in `dist/packages/`.
 - `npm run resilience:smoke`: run the protocol/scenario smoke matrix and print trace events.
 - `npm test`: run all Vitest tests.
 - `npm run typecheck`: run TypeScript type checking without emitting files.
