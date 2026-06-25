@@ -1,6 +1,11 @@
 {
   "name": "stream-resilience-lab",
   "version": "0.1.0",
+  "description": "SDK client resilience testing lab for LLM streaming failures",
+  "author": {
+    "name": "Stream Resilience Lab",
+    "email": "lab@stream-resilience.local"
+  },
   "private": true,
   "type": "module",
   "main": "dist-electron/main.mjs",
