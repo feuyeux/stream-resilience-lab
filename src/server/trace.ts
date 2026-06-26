@@ -15,6 +15,11 @@ interface ResolvedServerTraceStoreOptions {
   maxSessions: number;
 }
 
+interface SessionBucket {
+  events: TraceEvent[];
+  lastAccess: number;
+}
+
 export interface TraceWritable {
   destroyed?: boolean;
   writableEnded?: boolean;
@@ -22,21 +27,23 @@ export interface TraceWritable {
 }
 
 export class ServerTraceStore {
-  readonly #eventsBySession = new Map<string, TraceEvent[]>();
+  readonly #eventsBySession = new Map<string, SessionBucket>();
   readonly #listenersBySession = new Map<string, Set<TraceListener>>();
   readonly #options: ResolvedServerTraceStoreOptions;
+  #accessCounter = 0;
 
   constructor(options: ResolvedServerTraceStoreOptions) {
     this.#options = options;
   }
 
   append(event: TraceEvent): void {
-    const events = this.#eventsBySession.get(event.debugSessionId) ?? [];
+    const bucket = this.#getOrCreateBucket(event.debugSessionId);
+    const events = bucket.events;
     events.push(event);
     if (events.length > this.#options.maxEventsPerSession) {
       events.splice(0, events.length - this.#options.maxEventsPerSession);
     }
-    this.#touchSession(event.debugSessionId, events);
+    bucket.lastAccess = this.#nextAccess();
     this.#evictExcessSessions();
 
     const listeners = this.#listenersBySession.get(event.debugSessionId);
@@ -53,11 +60,11 @@ export class ServerTraceStore {
   }
 
   snapshot(debugSessionId: string): TraceEvent[] {
-    const events = this.#eventsBySession.get(debugSessionId);
-    if (!events) return [];
+    const bucket = this.#eventsBySession.get(debugSessionId);
+    if (!bucket) return [];
 
-    this.#touchSession(debugSessionId, events);
-    return [...events];
+    bucket.lastAccess = this.#nextAccess();
+    return [...bucket.events];
   }
 
   subscribe(debugSessionId: string, listener: TraceListener): UnsubscribeTraceListener {
@@ -73,28 +80,47 @@ export class ServerTraceStore {
     };
   }
 
-  #touchSession(debugSessionId: string, events: TraceEvent[]): void {
-    this.#eventsBySession.delete(debugSessionId);
-    this.#eventsBySession.set(debugSessionId, events);
+  #nextAccess(): number {
+    this.#accessCounter += 1;
+    return this.#accessCounter;
+  }
+
+  #getOrCreateBucket(debugSessionId: string): SessionBucket {
+    const existing = this.#eventsBySession.get(debugSessionId);
+    if (existing) return existing;
+
+    const bucket: SessionBucket = { events: [], lastAccess: this.#nextAccess() };
+    this.#eventsBySession.set(debugSessionId, bucket);
+    return bucket;
   }
 
   #evictExcessSessions(): void {
     while (this.#eventsBySession.size > this.#options.maxSessions) {
-      const inactiveSessionId = this.#oldestSessionId((debugSessionId) => !this.#hasActiveSubscribers(debugSessionId));
-      const sessionId = inactiveSessionId ?? this.#oldestSessionId();
+      const sessionId = this.#selectEvictionTarget();
       if (!sessionId) return;
 
       this.#eventsBySession.delete(sessionId);
     }
   }
 
-  #oldestSessionId(predicate: (debugSessionId: string) => boolean = () => true): string | undefined {
-    for (const debugSessionId of this.#eventsBySession.keys()) {
-      if (predicate(debugSessionId)) {
-        return debugSessionId;
+  #selectEvictionTarget(): string | undefined {
+    let oldestInactive: { sessionId: string; lastAccess: number } | undefined;
+    let oldestActive: { sessionId: string; lastAccess: number } | undefined;
+
+    for (const [sessionId, bucket] of this.#eventsBySession.entries()) {
+      const candidate = { sessionId, lastAccess: bucket.lastAccess };
+      if (this.#hasActiveSubscribers(sessionId)) {
+        if (!oldestActive || candidate.lastAccess < oldestActive.lastAccess) {
+          oldestActive = candidate;
+        }
+      } else {
+        if (!oldestInactive || candidate.lastAccess < oldestInactive.lastAccess) {
+          oldestInactive = candidate;
+        }
       }
     }
-    return undefined;
+
+    return oldestInactive?.sessionId ?? oldestActive?.sessionId;
   }
 
   #hasActiveSubscribers(debugSessionId: string): boolean {

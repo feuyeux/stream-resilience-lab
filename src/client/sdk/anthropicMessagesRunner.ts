@@ -1,10 +1,35 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { SdkRunInput, SdkRunResult } from "./types.js";
-import { attachPartialState, emitStreamObservation, enforceClientStreamControls } from "./streamObservation.js";
+import { buildMockHeaders } from "./metadata.js";
+import { iterateSdkStream, type StreamEventHandler } from "./streamIteration.js";
 
 function normalizeAnthropicBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/v1\/?$/, "");
 }
+
+type AnthropicStreamEvent = Anthropic.Messages.RawMessageStreamEvent;
+
+const anthropicStreamHandler: StreamEventHandler<AnthropicStreamEvent> = {
+  eventName: (event) => event.type,
+  extractTextDelta: (event) => {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "text_delta"
+    ) {
+      return event.delta.text;
+    }
+    return undefined;
+  },
+  extractToolJsonDelta: (event) => {
+    if (
+      event.type === "content_block_delta" &&
+      event.delta.type === "input_json_delta"
+    ) {
+      return event.delta.partial_json;
+    }
+    return undefined;
+  }
+};
 
 export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunResult> {
   const client = new Anthropic({
@@ -14,7 +39,7 @@ export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunRe
   });
   const requestOptions = {
     signal: input.signal,
-    headers: buildHeaders(input)
+    headers: buildMockHeaders(input)
   };
 
   if (!input.stream) {
@@ -40,57 +65,14 @@ export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunRe
   }
 
   const stream = await client.messages.create(
-      {
-        model: input.model,
-        max_tokens: 256,
-        messages: [{ role: "user", content: input.query }],
-        stream: true
-      },
+    {
+      model: input.model,
+      max_tokens: 256,
+      messages: [{ role: "user", content: input.query }],
+      stream: true
+    },
     requestOptions
   );
 
-  let text = "";
-  let toolJson = "";
-  let chunkIndex = 0;
-  const events: string[] = [];
-
-  try {
-    for await (const event of stream) {
-      input.recordStreamProgress?.();
-      chunkIndex += 1;
-      events.push(event.type);
-      let textDeltaLength = 0;
-
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        text += event.delta.text;
-        textDeltaLength = event.delta.text.length;
-      }
-
-      if (event.type === "content_block_delta" && event.delta.type === "input_json_delta") {
-        toolJson += event.delta.partial_json;
-      }
-
-      emitStreamObservation(input, event.type, chunkIndex, textDeltaLength, text.length, toolJson);
-      enforceClientStreamControls(input, chunkIndex, text, events, toolJson);
-    }
-  } catch (error) {
-    attachPartialState(error, text, events, toolJson);
-    throw error;
-  }
-
-  return { text, events, toolJson: toolJson || undefined };
+  return iterateSdkStream(input, stream, anthropicStreamHandler);
 }
-
-function buildHeaders(input: SdkRunInput): Record<string, string> {
-  return {
-    "x-mock-scenario": input.scenario,
-    ...(input.debug
-      ? {
-          "x-debug-session-id": input.debug.debugSessionId,
-          "x-debug-attempt-id": input.debug.attemptId,
-          "x-mock-request-id": input.debug.requestId
-        }
-      : {})
-  };
-}
-

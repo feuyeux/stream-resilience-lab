@@ -81,24 +81,24 @@ function waitForClientClose(reply: FastifyReply): Promise<void> {
   });
 }
 
-function requestBody(request: FastifyRequest): BodyWithMockFields | undefined {
-  return request.body as BodyWithMockFields | undefined;
+function requestBody(request: FastifyRequest): BodyWithMockFields {
+  return request.body as BodyWithMockFields;
 }
 
 export function selectScenario(request: FastifyRequest): ScenarioName {
   const headerValue = firstHeaderValue(request.headers["x-mock-scenario"]);
-  const queryValue = (request.query as QueryWithScenario | undefined)?.scenario;
-  const bodyValue = requestBody(request)?.metadata?.mock_scenario;
+  const queryValue = (request.query as QueryWithScenario).scenario;
+  const bodyValue = requestBody(request).metadata?.mock_scenario;
   const selected = headerValue ?? queryValue ?? bodyValue;
   return resolveScenario(selected).name;
 }
 
 export function selectModel(request: FastifyRequest): string {
-  return requestBody(request)?.model ?? "mock-model";
+  return requestBody(request).model ?? "mock-model";
 }
 
 export function selectStream(request: FastifyRequest): boolean {
-  return Boolean(requestBody(request)?.stream);
+  return Boolean(requestBody(request).stream);
 }
 
 export function selectOutput(protocol: Protocol, request: FastifyRequest): string {
@@ -107,7 +107,7 @@ export function selectOutput(protocol: Protocol, request: FastifyRequest): strin
     return headerValue ?? defaultText;
   }
 
-  return headerValue ?? requestBody(request)?.input ?? defaultText;
+  return headerValue ?? requestBody(request).input ?? defaultText;
 }
 
 function buildTraceContext(

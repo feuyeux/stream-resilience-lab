@@ -2,6 +2,7 @@ import type { ProblemKind, RunLogger, RunOptions, RunOutcome, RunStatus } from "
 import { computeBackoffMs } from "../../shared/retry.js";
 import type { SdkRunResult } from "../sdk/types.js";
 import { normalizeProviderError } from "./normalizeError.js";
+import { PolicyState, type PolicyStateOptions } from "./policyState.js";
 
 export interface RunnerContext {
   attempt: number;
@@ -12,17 +13,14 @@ export interface RunnerContext {
 
 type Runner = (signal: AbortSignal, context: RunnerContext) => Promise<SdkRunResult>;
 
-interface PolicyDeps {
+export interface PolicyDeps extends PolicyStateOptions {
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
   logger?: RunLogger;
+  state?: PolicyState;
 }
 
-const activeSessionLocks = new Set<string>();
-const providerCircuitBreakers = new Map<string, number>();
-const providerCooldowns = new Map<string, number>();
-const providerCircuitBreakerMs = 60_000;
-const providerCooldownMs = 60_000;
+const defaultState = new PolicyState();
 type TimeoutKind = Extract<ProblemKind, "idle_timeout" | "wall_timeout">;
 
 class ResilienceTimeoutError extends Error {
@@ -52,6 +50,7 @@ function statusForSuccess(options: RunOptions, retryAttempts: number): RunStatus
 }
 
 export async function runWithResilience(options: RunOptions, runner: Runner, deps: PolicyDeps = {}): Promise<RunOutcome> {
+  const state = deps.state ?? defaultState;
   const started = Date.now();
   const startedAt = new Date(started).toISOString();
   const actions: string[] = [];
@@ -84,7 +83,7 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
   }
 
   const cooldownKey = providerKey(options);
-  if (isProviderCircuitOpen(cooldownKey)) {
+  if (state.isProviderCircuitOpen(cooldownKey)) {
     actions.push("blocked_circuit_breaker");
     return finish(makeOutcome(startedAt, started, {
       kind: "overloaded",
@@ -99,7 +98,7 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
     }));
   }
 
-  if (isProviderCoolingDown(cooldownKey)) {
+  if (state.isProviderCoolingDown(cooldownKey)) {
     actions.push("blocked_provider_cooldown");
     return finish(makeOutcome(startedAt, started, {
       kind: "overloaded",
@@ -114,7 +113,7 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
     }));
   }
 
-  if (options.sessionId && activeSessionLocks.has(options.sessionId)) {
+  if (options.sessionId && state.isSessionLocked(options.sessionId)) {
     actions.push("blocked_concurrent_session");
     return finish(makeOutcome(startedAt, started, {
       kind: "session_lock_conflict",
@@ -129,11 +128,11 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
     }));
   }
 
-  if (options.sessionId) activeSessionLocks.add(options.sessionId);
+  if (options.sessionId) state.lockSession(options.sessionId);
   try {
-    return finish(await runAttempts(options, runner, deps, startedAt, started, actions));
+    return finish(await runAttempts(options, runner, deps, state, startedAt, started, actions));
   } finally {
-    if (options.sessionId) activeSessionLocks.delete(options.sessionId);
+    if (options.sessionId) state.unlockSession(options.sessionId);
   }
 }
 
@@ -141,6 +140,7 @@ async function runAttempts(
   options: RunOptions,
   runner: Runner,
   deps: PolicyDeps,
+  state: PolicyState,
   startedAt: string,
   started: number,
   actions: string[]
@@ -297,7 +297,7 @@ async function runAttempts(
   if (options.scenario === "circuit-breaker-open") {
     circuitOpened = true;
     actions.push("opened_circuit_breaker");
-    providerCircuitBreakers.set(providerKey(options), Date.now() + providerCircuitBreakerMs);
+    state.openProviderCircuit(providerKey(options));
     return makeOutcome(startedAt, started, {
       kind: lastProblem,
       message: lastMessage,
@@ -313,7 +313,7 @@ async function runAttempts(
 
   if (options.scenario === "provider-cooldown") {
     actions.push("opened_provider_cooldown");
-    providerCooldowns.set(providerKey(options), Date.now() + providerCooldownMs);
+    state.openProviderCooldown(providerKey(options));
     return makeOutcome(startedAt, started, {
       kind: lastProblem,
       message: lastMessage,
@@ -633,26 +633,6 @@ function exceedsMaxTurns(options: RunOptions): boolean {
 
 function providerKey(options: RunOptions): string {
   return `${options.protocol}:${options.baseUrl}:${options.model}`;
-}
-
-function isProviderCircuitOpen(key: string): boolean {
-  const expiresAt = providerCircuitBreakers.get(key);
-  if (expiresAt === undefined) return false;
-  if (expiresAt <= Date.now()) {
-    providerCircuitBreakers.delete(key);
-    return false;
-  }
-  return true;
-}
-
-function isProviderCoolingDown(key: string): boolean {
-  const expiresAt = providerCooldowns.get(key);
-  if (expiresAt === undefined) return false;
-  if (expiresAt <= Date.now()) {
-    providerCooldowns.delete(key);
-    return false;
-  }
-  return true;
 }
 
 function statusForExhaustedProblem(kind: ProblemKind): RunStatus {
