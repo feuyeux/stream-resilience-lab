@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyError } from "../../src/client/resilience/classify.js";
 import { runWithResilience } from "../../src/client/resilience/policy.js";
+import { PolicyState } from "../../src/client/resilience/policyState.js";
 
 describe("resilience policy", () => {
   it("classifies HTTP status errors", () => {
@@ -316,6 +317,7 @@ describe("resilience policy", () => {
   });
 
   it("blocks later provider-cooldown requests for the same provider key", async () => {
+    const sharedState = new PolicyState(); // Share state between calls
     const baseOptions = {
       protocol: "openai-chat" as const,
       query: "hello",
@@ -335,7 +337,7 @@ describe("resilience policy", () => {
         error.status = 529;
         throw error;
       },
-      { sleep: async () => undefined, random: () => 0.5 }
+      { sleep: async () => undefined, random: () => 0.5, state: sharedState }
     );
 
     let called = false;
@@ -345,7 +347,7 @@ describe("resilience policy", () => {
         called = true;
         return { text: "should not run", events: ["done"] };
       },
-      { sleep: async () => undefined, random: () => 0.5 }
+      { sleep: async () => undefined, random: () => 0.5, state: sharedState }
     );
 
     expect(called).toBe(false);
@@ -354,6 +356,7 @@ describe("resilience policy", () => {
   });
 
   it("blocks later requests for a provider key after the circuit opens", async () => {
+    const sharedState = new PolicyState(); // Share state between calls
     const baseOptions = {
       protocol: "openai-chat" as const,
       query: "hello",
@@ -373,7 +376,7 @@ describe("resilience policy", () => {
         error.status = 529;
         throw error;
       },
-      { sleep: async () => undefined, random: () => 0.5 }
+      { sleep: async () => undefined, random: () => 0.5, state: sharedState }
     );
 
     let called = false;
@@ -383,7 +386,7 @@ describe("resilience policy", () => {
         called = true;
         return { text: "should not run", events: ["done"] };
       },
-      { sleep: async () => undefined, random: () => 0.5 }
+      { sleep: async () => undefined, random: () => 0.5, state: sharedState }
     );
 
     expect(called).toBe(false);
@@ -393,6 +396,7 @@ describe("resilience policy", () => {
   });
 
   it("blocks later requests during provider cooldown regardless of scenario", async () => {
+    const sharedState = new PolicyState(); // Share state between calls
     const baseOptions = {
       protocol: "openai-chat" as const,
       query: "hello",
@@ -412,7 +416,7 @@ describe("resilience policy", () => {
         error.status = 529;
         throw error;
       },
-      { sleep: async () => undefined, random: () => 0.5 }
+      { sleep: async () => undefined, random: () => 0.5, state: sharedState }
     );
 
     let called = false;
@@ -422,7 +426,7 @@ describe("resilience policy", () => {
         called = true;
         return { text: "should not run", events: ["done"] };
       },
-      { sleep: async () => undefined, random: () => 0.5 }
+      { sleep: async () => undefined, random: () => 0.5, state: sharedState }
     );
 
     expect(called).toBe(false);
@@ -730,6 +734,7 @@ describe("resilience policy", () => {
   });
 
   it("blocks concurrent work for the same session", async () => {
+    const sharedState = new PolicyState(); // Share state for session locks
     let releaseFirst: (() => void) | undefined;
     const first = runWithResilience(
       {
@@ -750,7 +755,7 @@ describe("resilience policy", () => {
         });
         return { text: "ok", events: ["done"] };
       },
-      { sleep: async () => undefined, random: () => 0.5 }
+      { sleep: async () => undefined, random: () => 0.5, state: sharedState }
     );
 
     await Promise.resolve();
@@ -769,7 +774,7 @@ describe("resilience policy", () => {
         wallTimeoutMs: 2000,
       },
       async () => ({ text: "should not run", events: ["done"] }),
-      { sleep: async () => undefined, random: () => 0.5 }
+      { sleep: async () => undefined, random: () => 0.5, state: sharedState }
     );
 
     releaseFirst?.();

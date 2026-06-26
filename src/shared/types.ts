@@ -138,6 +138,11 @@ export type RunLogEvent =
       use_case_id?: string;
     }
   | {
+      type: "precheck_blocked";
+      reason: "circuit_breaker_open" | "provider_cooldown" | "session_locked" | "max_turns_exceeded";
+      message: string;
+    }
+  | {
       type: "attempt_started";
       attempt: number;
       phase: "primary" | "fallback";

@@ -48,6 +48,8 @@ function summarizePolicyEvent(event: RunLogEvent): string {
   switch (event.type) {
     case "run_started":
       return `protocol=${event.protocol} scenario=${event.scenario}`;
+    case "precheck_blocked":
+      return `reason=${event.reason} message=${event.message}`;
     case "attempt_started":
       return `attempt=${event.attempt} model=${event.model}`;
     case "attempt_succeeded":

@@ -152,8 +152,9 @@ function traceSseEvent(context: ServerTraceContext | undefined, eventName: strin
   traceServer(context, "server.sse_event_sent", `event=${eventName}`, { eventName });
 }
 
-export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioName, model = "mock-model"): boolean {
+export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioName, traceContext: ServerTraceContext | undefined, model = "mock-model"): boolean {
   if (scenario === "rate-limit-retry-after") {
+    traceServer(traceContext, "server.error_sent", `status=429 type=rate_limit_error`, { status: 429, type: "rate_limit_error" });
     reply.header("retry-after", "1").code(429).send({
       error: { type: "rate_limit_error", message: "mock rate limit" }
     });
@@ -161,6 +162,7 @@ export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioNa
   }
 
   if (scenario === "overloaded-retry-after" || scenario === "circuit-breaker-open" || scenario === "provider-cooldown" || scenario === "background-overloaded") {
+    traceServer(traceContext, "server.error_sent", `status=529 type=overloaded_error`, { status: 529, type: "overloaded_error" });
     reply.header("retry-after", "1").code(529).send({
       error: { type: "overloaded_error", message: "mock overloaded" }
     });
@@ -168,6 +170,7 @@ export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioNa
   }
 
   if (scenario === "server-error") {
+    traceServer(traceContext, "server.error_sent", `status=500 type=server_error`, { status: 500, type: "server_error" });
     reply.code(500).send({
       error: { type: "server_error", message: "mock server error" }
     });
@@ -175,6 +178,7 @@ export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioNa
   }
 
   if (scenario === "fallback-recovery" && !model.includes("fallback")) {
+    traceServer(traceContext, "server.error_sent", `status=529 type=overloaded_error (fallback required)`, { status: 529, type: "overloaded_error", reason: "primary_model_overloaded" });
     reply.header("retry-after", "1").code(529).send({
       error: { type: "overloaded_error", message: "primary model overloaded" }
     });
@@ -182,6 +186,7 @@ export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioNa
   }
 
   if (scenario === "context-overflow") {
+    traceServer(traceContext, "server.error_sent", `status=400 type=context_length_exceeded`, { status: 400, type: "context_length_exceeded" });
     reply.code(400).send({
       error: { type: "context_length_exceeded", message: "mock context_length_exceeded" }
     });
@@ -192,7 +197,10 @@ export function maybeSendPreTokenError(reply: FastifyReply, scenario: ScenarioNa
 }
 
 export function sendJson(protocol: Protocol, reply: FastifyReply, model: string, scenario: ScenarioName, text: string, traceContext?: ServerTraceContext): void {
-  if (maybeSendPreTokenError(reply, scenario, model)) return;
+  if (maybeSendPreTokenError(reply, scenario, traceContext, model)) {
+    traceServer(traceContext, "server.response_completed", "response completed (error)");
+    return;
+  }
 
   const id = `${protocolPrefix(protocol)}_${Date.now()}`;
   if (protocol === "openai-chat") {
@@ -215,7 +223,10 @@ export function sendJson(protocol: Protocol, reply: FastifyReply, model: string,
 }
 
 export async function sendStream(protocol: Protocol, reply: FastifyReply, model: string, scenario: ScenarioName, text: string, traceContext?: ServerTraceContext): Promise<void> {
-  if (maybeSendPreTokenError(reply, scenario, model)) return;
+  if (maybeSendPreTokenError(reply, scenario, traceContext, model)) {
+    traceServer(traceContext, "server.response_completed", "response completed (error)");
+    return;
+  }
 
   const id = `${protocolPrefix(protocol)}_${Date.now()}`;
   const chunks =

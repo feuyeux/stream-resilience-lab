@@ -20,7 +20,6 @@ export interface PolicyDeps extends PolicyStateOptions {
   state?: PolicyState;
 }
 
-const defaultState = new PolicyState();
 type TimeoutKind = Extract<ProblemKind, "idle_timeout" | "wall_timeout">;
 
 class ResilienceTimeoutError extends Error {
@@ -50,7 +49,8 @@ function statusForSuccess(options: RunOptions, retryAttempts: number): RunStatus
 }
 
 export async function runWithResilience(options: RunOptions, runner: Runner, deps: PolicyDeps = {}): Promise<RunOutcome> {
-  const state = deps.state ?? defaultState;
+  // Create a new PolicyState for each run to avoid state pollution between debug sessions
+  const state = deps.state ?? new PolicyState(deps);
   const started = Date.now();
   const startedAt = new Date(started).toISOString();
   const actions: string[] = [];
@@ -69,6 +69,11 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
 
   if (exceedsMaxTurns(options)) {
     actions.push("stopped_max_turn_loop");
+    await logger?.log({
+      type: "precheck_blocked",
+      reason: "max_turns_exceeded",
+      message: "maximum turn count exceeded"
+    });
     return finish(makeOutcome(startedAt, started, {
       kind: "max_turns_exceeded",
       message: "maximum turn count exceeded",
@@ -85,6 +90,11 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
   const cooldownKey = providerKey(options);
   if (state.isProviderCircuitOpen(cooldownKey)) {
     actions.push("blocked_circuit_breaker");
+    await logger?.log({
+      type: "precheck_blocked",
+      reason: "circuit_breaker_open",
+      message: "provider circuit breaker is open"
+    });
     return finish(makeOutcome(startedAt, started, {
       kind: "overloaded",
       message: "provider circuit breaker is open",
@@ -100,6 +110,11 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
 
   if (state.isProviderCoolingDown(cooldownKey)) {
     actions.push("blocked_provider_cooldown");
+    await logger?.log({
+      type: "precheck_blocked",
+      reason: "provider_cooldown",
+      message: "provider cooldown is open"
+    });
     return finish(makeOutcome(startedAt, started, {
       kind: "overloaded",
       message: "provider cooldown is open",
@@ -115,6 +130,11 @@ export async function runWithResilience(options: RunOptions, runner: Runner, dep
 
   if (options.sessionId && state.isSessionLocked(options.sessionId)) {
     actions.push("blocked_concurrent_session");
+    await logger?.log({
+      type: "precheck_blocked",
+      reason: "session_locked",
+      message: `session ${options.sessionId} is already running`
+    });
     return finish(makeOutcome(startedAt, started, {
       kind: "session_lock_conflict",
       message: `session ${options.sessionId} is already running`,

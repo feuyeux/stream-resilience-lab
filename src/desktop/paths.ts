@@ -27,15 +27,19 @@ export interface DesktopAssetPaths {
 
 export function resolveDesktopAssetPaths(options: DesktopAssetPathOptions): DesktopAssetPaths {
   const env = options.env ?? process.env;
+  
+  // Use environment variable if set, otherwise fallback to mainDir
+  const preloadPath = env.STREAM_RESILIENCE_LAB_PRELOAD ?? (
+    options.packaged
+      ? join(options.mainDir, "preload.cjs")
+      : join(options.projectRoot, "dist-electron", "preload.cjs")
+  );
+  
   return {
     indexPath: options.packaged
       ? join(options.projectRoot, "dist", "desktop-renderer", "index.html")
       : join(options.projectRoot, "index.html"),
-    preloadPath: env.STREAM_RESILIENCE_LAB_PRELOAD ?? (
-      options.packaged
-        ? join(options.mainDir, "preload.cjs")
-        : join(options.projectRoot, "src", "desktop", "preload.ts")
-    ),
+    preloadPath,
     serverPath: options.packaged
       ? join(options.mainDir, "server.cjs")
       : join(options.projectRoot, "src", "server", "index.ts"),
