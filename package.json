@@ -22,7 +22,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "desktop:dev": "concurrently -n renderer,electron \"vite --config vite.desktop.config.ts\" \"tsx src/desktop/launcher.ts\"",
+    "desktop:dev": "concurrently --kill-others --success command-electron -n renderer,electron \"vite --config vite.desktop.config.ts\" \"tsx src/desktop/launcher.ts\"",
     "desktop:build": "vite build --config vite.desktop.config.ts",
     "desktop:dist": "tsx scripts/build-desktop.ts",
     "desktop:dist:all": "tsx scripts/build-desktop.ts --all",

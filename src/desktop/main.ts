@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { runDebugSession } from "../client/debug/session.js";
+import type { TraceEvent } from "../shared/trace.js";
 import type { RunOptions } from "../shared/types.js";
 import { resolveDesktopAssetPaths, resolveProjectRoot } from "./paths.js";
 import type { ServerStatus } from "./types.js";
@@ -21,13 +22,21 @@ const assetPaths = resolveDesktopAssetPaths({ mainDir: here, packaged: isPackage
 let mainWindow: BrowserWindow | undefined;
 let serverProcess: ChildProcessWithoutNullStreams | undefined;
 let serverStatus: ServerStatus = { state: "stopped", url: providerUrl };
+let isQuitting = false;
+
+function sendToMainWindow(channel: "server:status", status: ServerStatus): void;
+function sendToMainWindow(channel: "debug:trace", traceEvent: TraceEvent): void;
+function sendToMainWindow(channel: string, payload: unknown): void {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send(channel, payload);
+}
 
 async function killProcessOnPort(targetPort: number): Promise<void> {
   if (process.platform === "win32") {
     try {
       const { stdout } = await execAsync(`netstat -ano | findstr :${targetPort}`);
       const lines = stdout.split("\n").filter(line => line.includes("LISTENING") || line.includes("ESTABLISHED"));
-      
+
       const pids = new Set<string>();
       for (const line of lines) {
         const parts = line.trim().split(/\s+/);
@@ -52,7 +61,7 @@ async function killProcessOnPort(targetPort: number): Promise<void> {
     try {
       const { stdout } = await execAsync(`lsof -ti:${targetPort}`);
       const pids = stdout.trim().split("\n").filter(Boolean);
-      
+
       for (const pid of pids) {
         try {
           await execAsync(`kill -9 ${pid}`);
@@ -69,7 +78,7 @@ async function killProcessOnPort(targetPort: number): Promise<void> {
 
 function publishServerStatus(status: ServerStatus): ServerStatus {
   serverStatus = status;
-  mainWindow?.webContents.send("server:status", status);
+  sendToMainWindow("server:status", status);
   return status;
 }
 
@@ -130,20 +139,42 @@ async function stopServer(): Promise<ServerStatus> {
 }
 
 async function createWindow(): Promise<void> {
-  mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 920,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      preload: assetPaths.preloadPath
-    }
-  });
+  if (isQuitting) {
+    console.log("[createWindow] App is quitting, skipping window creation");
+    return;
+  }
 
-  if (isPackaged) {
-    await mainWindow.loadFile(assetPaths.indexPath);
-  } else {
-    await mainWindow.loadURL(rendererDevUrl);
+  try {
+    console.log("[createWindow] Starting window creation...");
+    console.log("[createWindow] Preload path:", assetPaths.preloadPath);
+    console.log("[createWindow] Index path:", assetPaths.indexPath);
+    console.log("[createWindow] isPackaged:", isPackaged);
+
+    mainWindow = new BrowserWindow({
+      width: 1440,
+      height: 920,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        preload: assetPaths.preloadPath
+      }
+    });
+
+    if (isPackaged) {
+      await mainWindow.loadFile(assetPaths.indexPath);
+    } else {
+      await mainWindow.loadURL(rendererDevUrl);
+    }
+
+    mainWindow.once("closed", () => {
+      mainWindow = undefined;
+    });
+
+    console.log("[createWindow] Window created successfully");
+  } catch (error) {
+    console.error("[createWindow] Error while creating main window:");
+    console.error(error);
+    throw error;
   }
 }
 
@@ -153,18 +184,60 @@ ipcMain.handle("server:stop", stopServer);
 ipcMain.handle("debug:run", async (_event, options: RunOptions) => {
   const result = await runDebugSession(options, {
     onTraceEvent(traceEvent) {
-      mainWindow?.webContents.send("debug:trace", traceEvent);
+      sendToMainWindow("debug:trace", traceEvent);
     }
   });
   return { outcome: result.outcome };
 });
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  if (process.platform !== "darwin") {
+    isQuitting = true;
+    // Clean up server process before quitting
+    if (serverProcess) {
+      console.log("[window-all-closed] Killing server process");
+      serverProcess.kill("SIGTERM");
+      serverProcess = undefined;
+    }
+    // Small delay to ensure cleanup completes
+    setTimeout(() => {
+      app.quit();
+    }, 100);
+  }
 });
 
 app.on("before-quit", () => {
-  if (serverProcess) serverProcess.kill();
+  isQuitting = true;
+  // Additional cleanup if needed
+  if (serverProcess) {
+    console.log("[before-quit] Killing server process");
+    serverProcess.kill("SIGTERM");
+    serverProcess = undefined;
+  }
+});
+
+// Ensure cleanup on all exit paths
+process.on("exit", () => {
+  if (serverProcess) {
+    console.log("[process.exit] Killing server process");
+    serverProcess.kill("SIGTERM");
+  }
+});
+
+process.on("SIGINT", () => {
+  console.log("[SIGINT] Received, cleaning up...");
+  if (serverProcess) {
+    serverProcess.kill("SIGTERM");
+  }
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  console.log("[SIGTERM] Received, cleaning up...");
+  if (serverProcess) {
+    serverProcess.kill("SIGTERM");
+  }
+  process.exit(0);
 });
 
 void app.whenReady().then(async () => {
