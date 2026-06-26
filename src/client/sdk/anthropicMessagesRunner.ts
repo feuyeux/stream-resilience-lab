@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { SdkRunInput, SdkRunResult } from "./types.js";
-import { emitStreamObservation } from "./streamObservation.js";
+import { attachPartialState, emitStreamObservation, enforceClientStreamControls } from "./streamObservation.js";
 
 function normalizeAnthropicBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/v1\/?$/, "");
@@ -71,6 +71,7 @@ export async function runAnthropicMessages(input: SdkRunInput): Promise<SdkRunRe
       }
 
       emitStreamObservation(input, event.type, chunkIndex, textDeltaLength, text.length, toolJson);
+      enforceClientStreamControls(input, chunkIndex, text, events, toolJson);
     }
   } catch (error) {
     attachPartialState(error, text, events, toolJson);
@@ -93,12 +94,3 @@ function buildHeaders(input: SdkRunInput): Record<string, string> {
   };
 }
 
-function attachPartialState(error: unknown, text: string, events: string[], toolJson: string): void {
-  if (typeof error === "object" && error !== null) {
-    Object.assign(error, {
-      partialText: text,
-      partialEvents: events,
-      partialToolJson: toolJson || undefined
-    });
-  }
-}

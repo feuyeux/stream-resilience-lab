@@ -99,8 +99,8 @@ const scenarioBehaviors: Record<ScenarioName, ScenarioBehavior> = {
     client: "检测到事件数超过预算上限，主动取消消费并安全失败。背压保护优先于输出成功。"
   },
   "consumer-drop": {
-    server: "故障方是消费端（用户关闭页面、UI 停止读取），不是服务端。服务端行为与 midstream-close 相同（发送 2 chunk 后断流）。",
-    client: "通过场景标识或错误消息识别为消费端取消，不制造新的 provider 请求。"
+    server: "故障方是消费端（用户关闭页面、UI 停止读取），不是服务端；服务端继续正常发流，取消由客户端下游触发。",
+    client: "SDK runner 在 consumerDropAfterEvents 达到阈值后模拟下游取消，策略返回 consumer_cancelled 且不重试。"
   },
   "fallback-recovery": {
     server: "对 primary model 返回 529，对 fallback model 正常返回。模拟 primary provider 过载但备用可用。",
@@ -182,8 +182,8 @@ const scenarioBehaviorsEn: Record<ScenarioName, ScenarioBehavior> = {
     client: "Detects event count exceeds budget limit, proactively cancels consumption and fails safely. Backpressure protection takes priority over output success."
   },
   "consumer-drop": {
-    server: "Fault is the consumer (user closes page, UI stops reading), not the server. Server behavior mirrors midstream-close (2 chunks then disconnect).",
-    client: "Identifies consumer cancellation via scenario flag or error message, does not create new provider requests."
+    server: "Fault is the consumer (user closes page, UI stops reading), not the server; the server keeps streaming normally and client-side downstream cancellation triggers the abort.",
+    client: "SDK runner simulates downstream cancellation after consumerDropAfterEvents, policy returns consumer_cancelled and does not retry."
   },
   "fallback-recovery": {
     server: "Returns 529 for primary model, normal for fallback model. Simulates primary provider overload with backup available.",
@@ -265,8 +265,8 @@ const scenarioBehaviorsFr: Record<ScenarioName, ScenarioBehavior> = {
     client: "Détecte que le nombre d'événements dépasse la limite du budget, annule proactivement la consommation et échoue en sécurité. La protection contre-pression prime sur le succès de la sortie."
   },
   "consumer-drop": {
-    server: "La faute est le consommateur (utilisateur ferme la page, l'UI arrête de lire), pas le serveur. Le comportement serveur reflète midstream-close (2 fragments puis déconnexion).",
-    client: "Identifie l'annulation du consommateur via le drapeau de scénario ou le message d'erreur, ne crée pas de nouvelles requêtes fournisseur."
+    server: "La faute est le consommateur (utilisateur ferme la page, l'UI arrête de lire), pas le serveur ; le serveur continue le flux et l'annulation aval côté client déclenche l'abort.",
+    client: "Le runner SDK simule l'annulation aval après consumerDropAfterEvents ; la stratégie renvoie consumer_cancelled sans retry."
   },
   "fallback-recovery": {
     server: "Renvoie 529 pour le modèle principal, normal pour le modèle de secours. Simule la surcharge du fournisseur principal avec une sauvegarde disponible.",
@@ -348,8 +348,8 @@ const scenarioBehaviorsRu: Record<ScenarioName, ScenarioBehavior> = {
     client: "Обнаруживает превышение лимита бюджета событий, проактивно отменяет потребление и безопасно отказывает. Защита от перегрузки приоритетнее успеха вывода."
   },
   "consumer-drop": {
-    server: "Неисправность на стороне потребителя (пользователь закрыл страницу, UI перестал читать), а не на сервере. Поведение сервера аналогично midstream-close (2 фрагмента, затем отключение).",
-    client: "Определяет отмену потребителя через флаг сценария или сообщение об ошибке, не создаёт новых запросов к провайдеру."
+    server: "Неисправность — потребитель (пользователь закрывает страницу, UI перестаёт читать), не сервер; сервер продолжает поток, а downstream-отмена на стороне клиента вызывает abort.",
+    client: "SDK runner имитирует downstream-отмену после consumerDropAfterEvents; policy возвращает consumer_cancelled без retry."
   },
   "fallback-recovery": {
     server: "Возвращает 529 для основной модели, нормально для резервной. Имитирует перегрузку основного провайдера при доступном резерве.",
@@ -677,6 +677,7 @@ const categoryTranslations: Record<"en" | "zh" | "fr" | "ru", Record<string, str
     baseline: "Baseline & Normal",
     "pre-token": "Pre-Token Errors",
     "stream-interruption": "Stream Interruption",
+    "consumer-cancellation": "Consumer Cancellation",
     malformed: "Malformed Frames",
     "hung-stream": "Hung Streams & Heartbeats",
     "tool-call": "Incomplete Tool Calls",
@@ -687,6 +688,7 @@ const categoryTranslations: Record<"en" | "zh" | "fr" | "ru", Record<string, str
     baseline: "基准与正常场景",
     "pre-token": "首 Token 前错误",
     "stream-interruption": "流中断",
+    "consumer-cancellation": "消费者取消",
     malformed: "畸形帧",
     "hung-stream": "挂起流与心跳流",
     "tool-call": "半截工具调用",
@@ -697,6 +699,7 @@ const categoryTranslations: Record<"en" | "zh" | "fr" | "ru", Record<string, str
     baseline: "Base & Normal",
     "pre-token": "Erreurs Pre-Token",
     "stream-interruption": "Interruption de Flux",
+    "consumer-cancellation": "Annulation Consommateur",
     malformed: "Trames Malformées",
     "hung-stream": "Flux Suspendus & Signaux de Vie",
     "tool-call": "Appels d'Outils Incomplets",
@@ -707,6 +710,7 @@ const categoryTranslations: Record<"en" | "zh" | "fr" | "ru", Record<string, str
     baseline: "Базовые и Нормальные",
     "pre-token": "Ошибки до Первого Токена",
     "stream-interruption": "Прерывание Стрима",
+    "consumer-cancellation": "Отмена Потребителем",
     malformed: "Повреждённые Кадры",
     "hung-stream": "Зависшие Стримы и Сердцебиения",
     "tool-call": "Незавершённые Вызовы Инструментов",
@@ -715,7 +719,7 @@ const categoryTranslations: Record<"en" | "zh" | "fr" | "ru", Record<string, str
   }
 };
 
-const categoryKeys = ["baseline", "pre-token", "stream-interruption", "malformed", "hung-stream", "tool-call", "backpressure", "agent-safety"] as const;
+const categoryKeys = ["baseline", "pre-token", "stream-interruption", "consumer-cancellation", "malformed", "hung-stream", "tool-call", "backpressure", "agent-safety"] as const;
 
 const scenarioCategoryMap: Record<ScenarioName, typeof categoryKeys[number]> = {
   normal: "baseline",
@@ -725,7 +729,7 @@ const scenarioCategoryMap: Record<ScenarioName, typeof categoryKeys[number]> = {
   "overloaded-retry-after": "pre-token",
   "server-error": "pre-token",
   "midstream-close": "stream-interruption",
-  "consumer-drop": "stream-interruption",
+  "consumer-drop": "consumer-cancellation",
   "half-sse-frame": "malformed",
   "silent-hang": "hung-stream",
   "heartbeat-only": "hung-stream",
@@ -754,7 +758,7 @@ const scenarioTranslations: Record<"en" | "zh" | "fr" | "ru", Record<ScenarioNam
     "half-tool-json": { name: "half-tool-json", description: "streams incomplete tool-call JSON then closes" },
     "flood": { name: "flood", description: "emits many chunks quickly" },
     "bounded-queue-overflow": { name: "bounded-queue-overflow", description: "emits more chunks than the client queue budget allows" },
-    "consumer-drop": { name: "consumer-drop", description: "emits partial text until the downstream consumer disconnects" },
+    "consumer-drop": { name: "consumer-drop", description: "client-side downstream consumer cancels after partial stream consumption" },
     "fallback-recovery": { name: "fallback-recovery", description: "fails on the primary model and succeeds on a fallback model" },
     "circuit-breaker-open": { name: "circuit-breaker-open", description: "opens a circuit after repeated provider failures" },
     "provider-cooldown": { name: "provider-cooldown", description: "opens a provider cooldown after repeated overload responses" },
@@ -776,7 +780,7 @@ const scenarioTranslations: Record<"en" | "zh" | "fr" | "ru", Record<ScenarioNam
     "half-tool-json": { name: "不完整工具 JSON (half-tool-json)", description: "流式发送未闭合的工具调用参数 JSON 后强行断开连接，防止副作用执行。" },
     "flood": { name: "高频流量冲击 (flood)", description: "无延迟地高频快速发送大量小分块文本，测试客户端大吞吐量流接收能力。" },
     "bounded-queue-overflow": { name: "队列容量溢出 (bounded-queue-overflow)", description: "快速连续发送大量分块文本，超出客户端设接收队列缓冲上限。" },
-    "consumer-drop": { name: "消费者主动取消 (consumer-drop)", description: "正常发送流数据，直至客户端下游消费者取消或主动断开连接。" },
+    "consumer-drop": { name: "消费者主动取消 (consumer-drop)", description: "下游消费者在部分流消费后取消；客户端主动中止 inference stream。" },
     "fallback-recovery": { name: "备用降级恢复 (fallback-recovery)", description: "主模型服务发生过载；在尝试耗尽后自动降级并重试备选备用模型。" },
     "circuit-breaker-open": { name: "熔断器开启拦截 (circuit-breaker-open)", description: "检测到连续故障后打开熔断器，在冷却期内直接拦截后置请求。" },
     "provider-cooldown": { name: "服务商冷却保护 (provider-cooldown)", description: "当故障耗尽后触发提供者冷却，短时间内拒绝再次向该提供者请求。" },
@@ -798,7 +802,7 @@ const scenarioTranslations: Record<"en" | "zh" | "fr" | "ru", Record<ScenarioNam
     "half-tool-json": { name: "half-tool-json", description: "diffuse un JSON de paramètres d'outil incomplet et ferme brutalement." },
     "flood": { name: "flood", description: "diffuse de nombreux fragments très rapidement sans délai." },
     "bounded-queue-overflow": { name: "bounded-queue-overflow", description: "diffuse trop de fragments rapidement, dépassant le budget client." },
-    "consumer-drop": { name: "consumer-drop", description: "diffuse normalement jusqu'à ce que le consommateur annule la connexion." },
+    "consumer-drop": { name: "consumer-drop", description: "le consommateur aval côté client annule après une consommation partielle du flux." },
     "fallback-recovery": { name: "fallback-recovery", description: "échoue sur le modèle principal puis redirige vers le modèle de secours." },
     "circuit-breaker-open": { name: "circuit-breaker-open", description: "ouvre le disjoncteur après des échecs répétés pour bloquer les appels." },
     "provider-cooldown": { name: "provider-cooldown", description: "active le refroidissement après surcharges répétées pour bloquer les requêtes." },
@@ -820,7 +824,7 @@ const scenarioTranslations: Record<"en" | "zh" | "fr" | "ru", Record<ScenarioNam
     "half-tool-json": { name: "half-tool-json", description: "отправляет неполный JSON аргументов инструмента и обрывает сокет." },
     "flood": { name: "flood", description: "очень быстро отправляет множество мелких фрагментов без задержки." },
     "bounded-queue-overflow": { name: "bounded-queue-overflow", description: "быстро отправляет много фрагментов, превышая лимит буфера." },
-    "consumer-drop": { name: "consumer-drop", description: "передает данные до тех пор, пока клиентский потребитель не отменит." },
+    "consumer-drop": { name: "consumer-drop", description: "downstream-потребитель на стороне клиента отменяет после частичного чтения потока." },
     "fallback-recovery": { name: "fallback-recovery", description: "сбой основной модели перенаправляет запрос на резервную." },
     "circuit-breaker-open": { name: "circuit-breaker-open", description: "блокирует запросы при открытом автопрерывателе после серии сбоев." },
     "provider-cooldown": { name: "provider-cooldown", description: "временно блокирует обращения к провайдеру после повторных сбоев." },
@@ -1134,7 +1138,9 @@ export function App() {
     return scenarioCatalog.filter(s =>
       s.name.toLowerCase().includes(q) ||
       s.description.toLowerCase().includes(q) ||
-      s.expectedProblem.toLowerCase().includes(q)
+      s.injectedProblem.toLowerCase().includes(q) ||
+      s.expectedFinalProblem.toLowerCase().includes(q) ||
+      s.expectedStatus.toLowerCase().includes(q)
     );
   }, [scenarioSearch]);
 
@@ -1144,6 +1150,31 @@ export function App() {
     if (lang === "ru") return scenarioBehaviorsRu[scenario];
     return scenarioBehaviorsEn[scenario];
   }, [scenario, lang]);
+
+  function scenarioDefaultOptions(selectedScenario: ScenarioName): Partial<RunOptions> {
+    if (selectedScenario === "bounded-queue-overflow") {
+      return { maxStreamEvents: 100, wallTimeoutMs: Math.max(wallTimeoutMs, 8000) };
+    }
+    if (selectedScenario === "flood") {
+      return { wallTimeoutMs: Math.max(wallTimeoutMs, 8000) };
+    }
+    if (selectedScenario === "consumer-drop") {
+      return { consumerDropAfterEvents: 3 };
+    }
+    if (selectedScenario === "fallback-recovery") {
+      return { fallbackModel: fallbackModel || "mock-fallback-model" };
+    }
+    if (selectedScenario === "background-overloaded") {
+      return { priority: "background" };
+    }
+    if (selectedScenario === "session-lock-conflict") {
+      return { sessionId: sessionId || "desktop-session-lock" };
+    }
+    if (selectedScenario === "max-turns-exceeded") {
+      return { currentTurn: 4, maxTurns: 3 };
+    }
+    return {};
+  }
 
   async function run() {
     setEvents([]);
@@ -1162,7 +1193,8 @@ export function App() {
       wallTimeoutMs,
       fallbackModel: fallbackModel || undefined,
       priority,
-      sessionId: sessionId || undefined
+      sessionId: sessionId || undefined,
+      ...scenarioDefaultOptions(scenario)
     };
     try {
       const result = await window.streamDebugger.runDebugSession(options);
@@ -1482,8 +1514,8 @@ export function App() {
                     </div>
                     <p className="scenario-meta-desc">{getScenarioDescription(activeScenarioDef.name)}</p>
                     <div className="scenario-meta-footer">
-                      <span className={`badge badge-problem problem-${activeScenarioDef.expectedProblem}`}>
-                        {t.expectedLabel} {getProblemLabel(activeScenarioDef.expectedProblem)}
+                      <span className={`badge badge-problem problem-${activeScenarioDef.expectedFinalProblem}`}>
+                        {t.expectedLabel} {getProblemLabel(activeScenarioDef.expectedFinalProblem)} · {activeScenarioDef.expectedStatus}
                       </span>
                     </div>
                   </div>
@@ -1624,8 +1656,8 @@ export function App() {
                             </div>
                             <div className="scenario-card-desc">{getScenarioDescription(item.name)}</div>
                             <div className="scenario-meta-footer">
-                              <span className={`badge badge-problem problem-${item.expectedProblem}`}>
-                                {getProblemLabel(item.expectedProblem)}
+                              <span className={`badge badge-problem problem-${item.expectedFinalProblem}`}>
+                                {getProblemLabel(item.expectedFinalProblem)} · {item.expectedStatus}
                               </span>
                             </div>
                           </button>

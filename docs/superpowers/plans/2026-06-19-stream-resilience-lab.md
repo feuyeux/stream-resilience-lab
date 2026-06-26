@@ -1,5 +1,8 @@
 # Stream Resilience Lab Implementation Plan
 
+> **Current canonical docs:** scenario/use-case semantics now live in `docs/streaming-resilience.zh-CN.md`; use `injectedProblem`, `expectedFinalProblem`, and `expectedStatus` instead of the older single `injectedProblem` field.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a TypeScript/Node.js mock LLM provider and SDK-based resilience client for validating streaming failure handling across OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages protocols.
@@ -173,7 +176,7 @@ export interface ScenarioDefinition {
   protocols: Protocol[];
   streamOnly: boolean;
   description: string;
-  expectedProblem: ProblemKind;
+  injectedProblem: ProblemKind;
 }
 
 export interface RunOptions {
@@ -372,77 +375,77 @@ export const scenarios: ScenarioDefinition[] = [
     protocols: [...allProtocols],
     streamOnly: false,
     description: "valid response or valid stream",
-    expectedProblem: "none"
+    injectedProblem: "none"
   },
   {
     name: "slow",
     protocols: [...allProtocols],
     streamOnly: false,
     description: "delays first token and subsequent tokens",
-    expectedProblem: "none"
+    injectedProblem: "none"
   },
   {
     name: "rate-limit-retry-after",
     protocols: [...allProtocols],
     streamOnly: false,
     description: "returns 429 with retry-after before first token",
-    expectedProblem: "rate_limited"
+    injectedProblem: "rate_limited"
   },
   {
     name: "overloaded-retry-after",
     protocols: [...allProtocols],
     streamOnly: false,
     description: "returns 529 with retry-after before first token",
-    expectedProblem: "overloaded"
+    injectedProblem: "overloaded"
   },
   {
     name: "server-error",
     protocols: [...allProtocols],
     streamOnly: false,
     description: "returns 500 before first token",
-    expectedProblem: "server_error"
+    injectedProblem: "server_error"
   },
   {
     name: "midstream-close",
     protocols: [...allProtocols],
     streamOnly: true,
     description: "emits partial text then closes the socket",
-    expectedProblem: "stream_interrupted"
+    injectedProblem: "stream_interrupted"
   },
   {
     name: "half-sse-frame",
     protocols: [...allProtocols],
     streamOnly: true,
     description: "writes an incomplete SSE data frame then closes",
-    expectedProblem: "malformed_stream"
+    injectedProblem: "malformed_stream"
   },
   {
     name: "silent-hang",
     protocols: [...allProtocols],
     streamOnly: true,
     description: "keeps stream open without useful events",
-    expectedProblem: "idle_timeout"
+    injectedProblem: "idle_timeout"
   },
   {
     name: "heartbeat-only",
     protocols: [...allProtocols],
     streamOnly: true,
     description: "keeps stream open with heartbeat or ping events only",
-    expectedProblem: "idle_timeout"
+    injectedProblem: "idle_timeout"
   },
   {
     name: "half-tool-json",
     protocols: [...allProtocols],
     streamOnly: true,
     description: "streams incomplete tool-call JSON then closes",
-    expectedProblem: "unsafe_partial_tool_call"
+    injectedProblem: "unsafe_partial_tool_call"
   },
   {
     name: "flood",
     protocols: [...allProtocols],
     streamOnly: true,
     description: "emits many chunks quickly",
-    expectedProblem: "none"
+    injectedProblem: "none"
   }
 ];
 

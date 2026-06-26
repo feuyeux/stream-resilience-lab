@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { pathToFileURL } from "node:url";
-import { listScenarios } from "../shared/scenarios.js";
+import { listScenarios, resolveScenario } from "../shared/scenarios.js";
 import { formatTraceLine } from "../shared/trace.js";
 import type { Protocol, RunOptions, ScenarioName } from "../shared/types.js";
 import { runDebugSession } from "./debug/session.js";
@@ -59,6 +59,14 @@ export const smokeCases: DebugSmokeCase[] = smokeCaseDefinitions.map((testCase, 
   ...testCase
 }));
 
+export const fullSmokeCases: DebugSmokeCase[] = ["openai-chat", "openai-responses", "anthropic"].flatMap((protocol, protocolIndex) =>
+  listScenarios().map((scenario, scenarioIndex) => ({
+    id: `FUC${String(protocolIndex * listScenarios().length + scenarioIndex + 1).padStart(3, "0")}`,
+    protocol: protocol as Protocol,
+    scenario: scenario.name
+  }))
+);
+
 export { smokeModelForUseCase };
 
 function parseProtocol(value: string): Protocol {
@@ -73,12 +81,19 @@ function parseScenario(value: string): ScenarioName {
 }
 
 function makeOptions(protocol: Protocol, query: string, flags: Record<string, unknown>): RunOptions {
+  const scenario = parseScenario(String(flags.scenario ?? "normal"));
+  const mode = flags.stream === false ? "json" : "stream";
+  const scenarioDef = resolveScenario(scenario);
+  if (mode === "json" && scenarioDef.streamOnly) {
+    throw new Error(`Scenario ${scenario} requires stream mode`);
+  }
+
   return {
     protocol,
     useCaseId: flags.useCaseId ? String(flags.useCaseId) : undefined,
     query,
-    mode: flags.stream === false ? "json" : "stream",
-    scenario: parseScenario(String(flags.scenario ?? "normal")),
+    mode,
+    scenario,
     model: String(flags.model ?? "mock-model"),
     baseUrl: String(flags.baseUrl ?? "http://127.0.0.1:3000/v1"),
     maxAttempts: Number(flags.maxAttempts ?? 2),
@@ -87,6 +102,7 @@ function makeOptions(protocol: Protocol, query: string, flags: Record<string, un
     fallbackModel: flags.fallbackModel ? String(flags.fallbackModel) : undefined,
     priority: flags.priority === "background" ? "background" : "foreground",
     maxStreamEvents: flags.maxStreamEvents ? Number(flags.maxStreamEvents) : undefined,
+    consumerDropAfterEvents: scenario === "consumer-drop" ? 3 : undefined,
     sessionId: flags.sessionId ? String(flags.sessionId) : undefined,
     currentTurn: flags.currentTurn ? Number(flags.currentTurn) : undefined,
     maxTurns: flags.maxTurns ? Number(flags.maxTurns) : undefined
@@ -131,7 +147,7 @@ export function buildProgram(): Command {
 
   program.command("scenarios").action(() => {
     for (const scenario of listScenarios()) {
-      console.log(`${scenario.name.padEnd(26)} ${scenario.protocols.join(",").padEnd(42)} ${scenario.description}`);
+      console.log(`${scenario.name.padEnd(26)} ${scenario.protocols.join(",").padEnd(42)} injected=${scenario.injectedProblem.padEnd(24)} final=${scenario.expectedFinalProblem.padEnd(24)} status=${scenario.expectedStatus.padEnd(28)} ${scenario.description}`);
     }
   });
 
@@ -146,11 +162,23 @@ export function buildProgram(): Command {
       });
     });
 
+  program
+    .command("smoke-full")
+    .option("--base-url <url>", "provider base URL", "http://127.0.0.1:3000/v1")
+    .action(async (flags: Record<string, unknown>) => {
+      await runDebugSmoke(fullSmokeCases, flags, {
+        onTraceEvent(event) {
+          console.log(formatTraceLine(event));
+        }
+      });
+    });
+
   program.command("help-text").action(() => {
     console.log("fault-provider started. Try:");
     console.log('npm run resilience-runner -- openai-chat "hello" normal 3000');
     console.log('npm run resilience-runner -- anthropic "hello" midstream-close 3000');
     console.log("npm run resilience:smoke");
+    console.log("npm run resilience:smoke:full");
   });
 
   return program;

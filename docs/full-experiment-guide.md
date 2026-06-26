@@ -1,6 +1,8 @@
 # Stream Resilience Lab：全场景全用例完整实验说明
 
-本文档是 Stream Resilience Lab 的完整实验手册，逐一展开 20 个故障场景（S01–S20）和 45 个冒烟用例（UC001–UC045）的实验步骤、原理阐述与预期行为。每个场景均覆盖：服务端仿真原理、SDK 暴露面、客户端策略决策逻辑、预期 Trace 时间线和最终 `RunOutcome`。
+> **更新说明（2026-06-26）**：canonical 中文文档已迁移到 [`docs/streaming-resilience.zh-CN.md`](streaming-resilience.zh-CN.md)。本文保留完整实验叙述；场景字段以 `injectedProblem` / `expectedFinalProblem` / `expectedStatus` 为准，quick smoke 为 `UC001`-`UC045`，full smoke 为 `FUC001`-`FUC060`。
+
+本文档是 Stream Resilience Lab 的完整实验手册，逐一展开 20 个故障场景（S01–S20）、45 个稳定 quick smoke 用例（UC001–UC045）和 60 个 full smoke 用例（FUC001–FUC060）的实验步骤、原理阐述与预期行为。每个场景均覆盖：服务端仿真原理、SDK 暴露面、客户端策略决策逻辑、预期 Trace 时间线和最终 `RunOutcome`。
 
 每个场景都明确标注了**故障方**（谁制造了故障）和**容错方**（谁做出了应对决策）。故障方可能是服务端（`fault-provider` 模拟的 LLM provider）、消费端（用户/UI）或客户端本地状态；容错方始终是 `resilience-runner` 的策略层（`policy.ts` + SDK Runners）。
 
@@ -54,7 +56,7 @@ npm run resilience-runner -- <protocol> "<query>" <scenario> <wallTimeoutMs>
 npm run resilience:smoke
 ```
 
-自动运行 45 个核心用例（3 协议 × 15 核心场景），固定使用查询 `hello`。
+自动运行 45 个核心用例（3 协议 × 15 核心场景），固定使用查询 `hello`。完整矩阵使用 `npm run resilience:smoke:full`，覆盖 60 个用例（3 协议 × 20 场景）。
 
 ### 0.5 核心架构链路
 
@@ -492,10 +494,11 @@ npm run resilience-runner -- openai-chat "hello" server-error 3000
 for (const [index, chunk] of chunks.entries()) {
   await sleep(delay);
   // 写入文本 chunk...
-  if ((scenario === "midstream-close" || scenario === "consumer-drop") && index === 1) {
+  if (scenario === "midstream-close" && index === 1) {
     destroySse(reply);
     return;
   }
+  // consumer-drop 不由 server destroy；由 client/downstream 侧 abort。
 }
 ```
 
@@ -563,8 +566,8 @@ npm run resilience-runner -- anthropic "hello" midstream-close 3000
 
 #### 客户端策略决策原理
 
-1. **场景识别**：`reportUnsafeFailure()` 检查 `options.scenario === "consumer-drop"`，命中
-2. **或错误分类**：`classifyError()` 从消息中识别 `consumer dropped`/`consumer cancelled`，归类为 `consumer_cancelled`
+1. **client-side 触发**：SDK runner 在 `consumerDropAfterEvents` 达到阈值后抛出 consumer cancellation。
+2. **错误分类**：`classifyError()` 从消息中识别 `consumer dropped`/`consumer cancelled`，归类为 `consumer_cancelled`
 3. **决策**：记录 `cancelled_after_consumer_drop`，返回 `consumer_cancelled`
 
 **与 S07 的本质区别**：S07 是 provider 端断流（可能是网络故障），策略保守返回 partial；S13 是消费端取消（用户意图），策略不应制造新的 provider 请求。
@@ -900,10 +903,10 @@ npm run resilience-runner -- openai-responses "hello" half-tool-json 3000
 
 `reportSuccessfulAttempt()` 检查：
 ```typescript
-if (options.maxStreamEvents !== undefined &&
-    (options.scenario === "bounded-queue-overflow" || result.events.length > options.maxStreamEvents)) {
+// SDK runner 内部在事件预算超过时立即抛出 streamEventLimitExceeded。
+if (isStreamEventLimitExceeded(error)) {
   actions.push("cancelled_bounded_queue_overflow");
-  // → safe_failure
+  // → stream_backpressure + safe_failure，且不返回 partial output
 }
 ```
 
@@ -1338,7 +1341,7 @@ npm run resilience-runner -- openai-chat "hello" max-turns-exceeded 3000 --curre
 
 ## 9. 完整 Smoke Matrix 总表
 
-冒烟矩阵覆盖 3 协议 × 15 核心场景 = 45 个用例。
+quick smoke 矩阵覆盖 3 协议 × 15 核心场景 = 45 个用例；full smoke 矩阵覆盖 3 协议 × 20 全场景 = 60 个用例。
 
 ### 9.1 OpenAI Chat（UC001–UC015）
 

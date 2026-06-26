@@ -69,6 +69,51 @@ describe("desktop app", () => {
     }));
   });
 
+
+  it("uses canonical scenario defaults for desktop debug runs", async () => {
+    render(<App />);
+
+    await screen.findByText("running");
+    const scenarioSelect = screen.getByLabelText("Scenario");
+
+    fireEvent.change(scenarioSelect, { target: { value: "bounded-queue-overflow" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(api.runDebugSession).toHaveBeenCalled());
+    expect(api.runDebugSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      scenario: "bounded-queue-overflow",
+      maxStreamEvents: 100,
+      wallTimeoutMs: 8000
+    }));
+
+    vi.mocked(api.runDebugSession).mockClear();
+    fireEvent.change(scenarioSelect, { target: { value: "consumer-drop" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(api.runDebugSession).toHaveBeenCalled());
+    expect(api.runDebugSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      scenario: "consumer-drop",
+      consumerDropAfterEvents: 3
+    }));
+
+    vi.mocked(api.runDebugSession).mockClear();
+    fireEvent.change(scenarioSelect, { target: { value: "max-turns-exceeded" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(api.runDebugSession).toHaveBeenCalled());
+    expect(api.runDebugSession).toHaveBeenLastCalledWith(expect.objectContaining({
+      scenario: "max-turns-exceeded",
+      currentTurn: 4,
+      maxTurns: 3
+    }));
+  });
+
+  it("describes consumer-drop as client-side cancellation in the desktop scenario card", async () => {
+    render(<App />);
+
+    await screen.findByText("running");
+    fireEvent.change(screen.getByLabelText("Scenario"), { target: { value: "consumer-drop" } });
+
+    expect(screen.getByText(/client-side downstream consumer cancels/i)).toBeTruthy();
+    expect(screen.queryByText(/mirrors midstream-close/i)).toBeNull();
+  });
   it("supports dragging the left resizer to adjust left width", async () => {
     const { container } = render(<App />);
     await screen.findByText("running");

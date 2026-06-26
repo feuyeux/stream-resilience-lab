@@ -1,162 +1,198 @@
-import type { ScenarioDefinition, ScenarioName } from "./types.js";
+import type { ProblemKind, RunStatus, ScenarioDefinition, ScenarioName } from "./types.js";
 
 const allProtocols = ["openai-chat", "openai-responses", "anthropic"] as const;
 
-export const scenarios: ScenarioDefinition[] = [
-  {
-    name: "normal",
+function scenario(
+  input: Omit<ScenarioDefinition, "protocols" | "injectedProblem" | "expectedFinalProblem"> & {
+    injectedProblem?: ProblemKind;
+    expectedFinalProblem?: ProblemKind;
+    expectedStatus: RunStatus;
+  }
+): ScenarioDefinition {
+  const { injectedProblem, expectedFinalProblem, ...rest } = input;
+  return {
+    ...rest,
     protocols: [...allProtocols],
+    injectedProblem: injectedProblem ?? expectedFinalProblem ?? "none",
+    expectedFinalProblem: expectedFinalProblem ?? injectedProblem ?? "none"
+  };
+}
+
+export const scenarios: ScenarioDefinition[] = [
+  scenario({
+    name: "normal",
     streamOnly: false,
     description: "valid response or valid stream",
-    expectedProblem: "none"
-  },
-  {
+    injectedProblem: "none",
+    expectedFinalProblem: "none",
+    expectedStatus: "completed"
+  }),
+  scenario({
     name: "slow",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "delays first token and subsequent tokens",
-    expectedProblem: "none"
-  },
-  {
+    injectedProblem: "none",
+    expectedFinalProblem: "none",
+    expectedStatus: "completed_slow"
+  }),
+  scenario({
     name: "rate-limit-retry-after",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "returns 429 with retry-after before first token",
-    expectedProblem: "rate_limited"
-  },
-  {
+    injectedProblem: "rate_limited",
+    expectedFinalProblem: "rate_limited",
+    expectedStatus: "exhausted"
+  }),
+  scenario({
     name: "overloaded-retry-after",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "returns 529 with retry-after before first token",
-    expectedProblem: "overloaded"
-  },
-  {
+    injectedProblem: "overloaded",
+    expectedFinalProblem: "overloaded",
+    expectedStatus: "exhausted"
+  }),
+  scenario({
     name: "server-error",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "returns 500 before first token",
-    expectedProblem: "server_error"
-  },
-  {
+    injectedProblem: "server_error",
+    expectedFinalProblem: "server_error",
+    expectedStatus: "exhausted"
+  }),
+  scenario({
     name: "midstream-close",
-    protocols: [...allProtocols],
     streamOnly: true,
     description: "emits partial text then closes the socket",
-    expectedProblem: "stream_interrupted"
-  },
-  {
+    injectedProblem: "stream_interrupted",
+    expectedFinalProblem: "stream_interrupted",
+    expectedStatus: "partial_returned"
+  }),
+  scenario({
     name: "half-sse-frame",
-    protocols: [...allProtocols],
     streamOnly: true,
     description: "writes an incomplete SSE data frame then closes",
-    expectedProblem: "malformed_stream"
-  },
-  {
+    injectedProblem: "malformed_stream",
+    expectedFinalProblem: "malformed_stream",
+    expectedStatus: "safe_failure"
+  }),
+  scenario({
     name: "silent-hang",
-    protocols: [...allProtocols],
     streamOnly: true,
     description: "keeps stream open without useful events",
-    expectedProblem: "idle_timeout"
-  },
-  {
+    injectedProblem: "idle_timeout",
+    expectedFinalProblem: "idle_timeout",
+    expectedStatus: "aborted_idle_timeout"
+  }),
+  scenario({
     name: "heartbeat-only",
-    protocols: [...allProtocols],
     streamOnly: true,
     description: "keeps stream open with heartbeat or ping events only",
-    expectedProblem: "idle_timeout"
-  },
-  {
+    injectedProblem: "idle_timeout",
+    expectedFinalProblem: "idle_timeout",
+    expectedStatus: "aborted_idle_timeout"
+  }),
+  scenario({
     name: "half-tool-json",
-    protocols: [...allProtocols],
     streamOnly: true,
     description: "streams incomplete tool-call JSON then closes",
-    expectedProblem: "unsafe_partial_tool_call"
-  },
-  {
+    injectedProblem: "unsafe_partial_tool_call",
+    expectedFinalProblem: "unsafe_partial_tool_call",
+    expectedStatus: "safe_failure"
+  }),
+  scenario({
     name: "flood",
-    protocols: [...allProtocols],
     streamOnly: true,
     description: "emits many chunks quickly",
-    expectedProblem: "none"
-  },
-  {
+    injectedProblem: "none",
+    expectedFinalProblem: "none",
+    expectedStatus: "completed"
+  }),
+  scenario({
     name: "bounded-queue-overflow",
-    protocols: [...allProtocols],
     streamOnly: true,
     description: "emits more chunks than the client queue budget allows",
-    expectedProblem: "stream_backpressure"
-  },
-  {
+    injectedProblem: "stream_backpressure",
+    expectedFinalProblem: "stream_backpressure",
+    expectedStatus: "safe_failure"
+  }),
+  scenario({
     name: "consumer-drop",
-    protocols: [...allProtocols],
     streamOnly: true,
-    description: "emits partial text until the downstream consumer disconnects",
-    expectedProblem: "consumer_cancelled"
-  },
-  {
+    description: "client-side downstream consumer cancels after partial stream consumption",
+    injectedProblem: "consumer_cancelled",
+    expectedFinalProblem: "consumer_cancelled",
+    expectedStatus: "consumer_cancelled"
+  }),
+  scenario({
     name: "fallback-recovery",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "fails on the primary model and succeeds on a fallback model",
-    expectedProblem: "overloaded"
-  },
-  {
+    injectedProblem: "overloaded",
+    expectedFinalProblem: "none",
+    expectedStatus: "recovered"
+  }),
+  scenario({
     name: "circuit-breaker-open",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "opens a circuit after repeated provider failures",
-    expectedProblem: "overloaded"
-  },
-  {
+    injectedProblem: "overloaded",
+    expectedFinalProblem: "overloaded",
+    expectedStatus: "circuit_opened"
+  }),
+  scenario({
     name: "provider-cooldown",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "opens a provider cooldown after repeated overload responses",
-    expectedProblem: "overloaded"
-  },
-  {
+    injectedProblem: "overloaded",
+    expectedFinalProblem: "overloaded",
+    expectedStatus: "cooldown_opened"
+  }),
+  scenario({
     name: "background-overloaded",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "drops background work when the provider is overloaded",
-    expectedProblem: "overloaded"
-  },
-  {
+    injectedProblem: "overloaded",
+    expectedFinalProblem: "overloaded",
+    expectedStatus: "dropped_background"
+  }),
+  scenario({
     name: "context-overflow",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "returns a context length error that requires compaction",
-    expectedProblem: "context_overflow"
-  },
-  {
+    injectedProblem: "context_overflow",
+    expectedFinalProblem: "context_overflow",
+    expectedStatus: "context_compaction_required"
+  }),
+  scenario({
     name: "session-lock-conflict",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "blocks concurrent work for the same session",
-    expectedProblem: "session_lock_conflict"
-  },
-  {
+    injectedProblem: "session_lock_conflict",
+    expectedFinalProblem: "session_lock_conflict",
+    expectedStatus: "session_locked"
+  }),
+  scenario({
     name: "max-turns-exceeded",
-    protocols: [...allProtocols],
     streamOnly: false,
     description: "stops a loop before exceeding the configured max turns",
-    expectedProblem: "max_turns_exceeded"
-  }
+    injectedProblem: "max_turns_exceeded",
+    expectedFinalProblem: "max_turns_exceeded",
+    expectedStatus: "max_turns_exceeded"
+  })
 ];
 
 export function listScenarios(): ScenarioDefinition[] {
-  return scenarios.map((scenario) => ({
-    ...scenario,
-    protocols: [...scenario.protocols]
+  return scenarios.map((item) => ({
+    ...item,
+    protocols: [...item.protocols]
   }));
 }
 
 export function resolveScenario(value: unknown): ScenarioDefinition {
-  if (typeof value !== "string") return scenarios[0];
-  return scenarios.find((scenario) => scenario.name === value) ?? scenarios[0];
+  if (typeof value !== "string") return scenarios[0]!;
+  return scenarios.find((item) => item.name === value) ?? scenarios[0]!;
 }
 
 export function isScenarioName(value: string): value is ScenarioName {
-  return scenarios.some((scenario) => scenario.name === value);
+  return scenarios.some((item) => item.name === value);
 }

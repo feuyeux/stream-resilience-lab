@@ -16,6 +16,8 @@ export interface SdkRunInput {
   stream: boolean;
   scenario: ScenarioName;
   signal?: AbortSignal;
+  maxStreamEvents?: number;
+  consumerDropAfterEvents?: number;
   recordStreamProgress?: () => void;
   onStreamEvent?: (event: SdkStreamObservation) => void;
   debug?: {

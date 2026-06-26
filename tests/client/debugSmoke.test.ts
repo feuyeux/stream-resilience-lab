@@ -3,12 +3,12 @@ import { describe, expect, it } from "vitest";
 import { runDebugSmoke } from "../../src/client/debug/smoke.js";
 import type { RunOptions, RunOutcome } from "../../src/shared/types.js";
 
-function outcome(): RunOutcome {
+function outcome(status: RunOutcome["result"]["status"] = "completed"): RunOutcome {
   return {
     request_id: "mock_1",
-    problem: { kind: "none", after_partial_output: false, received_chars: 2 },
-    mitigation: { actions: [], retry_attempts: 0, fallback_used: false, circuit_opened: false },
-    result: { status: "completed", safe_to_retry_automatically: true },
+    problem: { kind: status === "session_locked" ? "session_lock_conflict" : "none", after_partial_output: false, received_chars: 2 },
+    mitigation: { actions: status === "session_locked" ? ["blocked_concurrent_session"] : [], retry_attempts: 0, fallback_used: false, circuit_opened: false },
+    result: { status, safe_to_retry_automatically: status !== "session_locked" },
     timing: {
       started_at: "2026-06-22T00:00:00.000Z",
       ended_at: "2026-06-22T00:00:00.001Z",
@@ -26,7 +26,8 @@ describe("runDebugSmoke", () => {
         { id: "UC001", protocol: "openai-chat", scenario: "fallback-recovery" },
         { id: "UC002", protocol: "openai-responses", scenario: "bounded-queue-overflow" },
         { id: "UC003", protocol: "anthropic", scenario: "max-turns-exceeded" },
-        { id: "UC004", protocol: "openai-chat", scenario: "background-overloaded" }
+        { id: "UC004", protocol: "openai-chat", scenario: "background-overloaded" },
+        { id: "UC005", protocol: "openai-chat", scenario: "consumer-drop" }
       ],
       { baseUrl: "http://provider.test/v1" },
       {
@@ -37,7 +38,7 @@ describe("runDebugSmoke", () => {
       }
     );
 
-    expect(results).toHaveLength(4);
+    expect(results).toHaveLength(5);
     expect(optionsSeen).toMatchObject([
       {
         useCaseId: "UC001",
@@ -57,7 +58,8 @@ describe("runDebugSmoke", () => {
         mode: "stream",
         scenario: "bounded-queue-overflow",
         model: "uc002-model",
-        maxStreamEvents: 100
+        maxStreamEvents: 100,
+        wallTimeoutMs: 8000
       },
       {
         useCaseId: "UC003",
@@ -75,6 +77,14 @@ describe("runDebugSmoke", () => {
         scenario: "background-overloaded",
         model: "uc004-model",
         priority: "background"
+      },
+      {
+        useCaseId: "UC005",
+        protocol: "openai-chat",
+        mode: "stream",
+        scenario: "consumer-drop",
+        model: "uc005-model",
+        consumerDropAfterEvents: 3
       }
     ]);
     const validOptionKeys = new Set([
@@ -91,10 +101,36 @@ describe("runDebugSmoke", () => {
       "fallbackModel",
       "priority",
       "maxStreamEvents",
+      "consumerDropAfterEvents",
       "sessionId",
       "currentTurn",
       "maxTurns"
     ]);
     expect(optionsSeen.flatMap((options) => Object.keys(options).filter((key) => !validOptionKeys.has(key)))).toEqual([]);
+  });
+
+  it("exercises session-lock-conflict with a concurrent lock holder", async () => {
+    const optionsSeen: RunOptions[] = [];
+    const results = await runDebugSmoke(
+      [{ id: "UC014", protocol: "openai-chat", scenario: "session-lock-conflict" }],
+      { baseUrl: "http://provider.test/v1" },
+      {
+        runDebugSession: async (options) => {
+          optionsSeen.push(options);
+          return {
+            outcome: outcome(options.scenario === "session-lock-conflict" ? "session_locked" : "completed"),
+            text: "ok",
+            events: []
+          };
+        }
+      }
+    );
+
+    expect(results).toHaveLength(1);
+    expect(results[0]!.outcome.result.status).toBe("session_locked");
+    expect(optionsSeen).toMatchObject([
+      { scenario: "normal", sessionId: "smoke-session-uc014" },
+      { scenario: "session-lock-conflict", sessionId: "smoke-session-uc014" }
+    ]);
   });
 });

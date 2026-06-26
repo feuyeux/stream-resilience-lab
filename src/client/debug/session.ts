@@ -81,6 +81,8 @@ export async function runDebugSession(options: RunOptions, deps: DebugSessionDep
           stream: options.mode === "stream",
           scenario: options.scenario,
           signal,
+          maxStreamEvents: options.maxStreamEvents,
+          consumerDropAfterEvents: options.consumerDropAfterEvents,
           recordStreamProgress: context.recordStreamProgress,
           debug: {
             debugSessionId,

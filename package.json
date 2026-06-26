@@ -25,7 +25,13 @@
     "desktop:dev": "concurrently -n renderer,electron \"vite --config vite.desktop.config.ts\" \"tsx src/desktop/launcher.ts\"",
     "desktop:build": "vite build --config vite.desktop.config.ts",
     "desktop:dist": "tsx scripts/build-desktop.ts",
-    "desktop": "npm run desktop:dev"
+    "desktop:dist:all": "tsx scripts/build-desktop.ts --all",
+    "desktop:dist:linux": "tsx scripts/build-desktop.ts --linux",
+    "desktop:dist:mac": "tsx scripts/build-desktop.ts --mac",
+    "desktop:dist:win": "tsx scripts/build-desktop.ts --win",
+    "desktop": "npm run desktop:dev",
+    "resilience:smoke:full": "tsx src/client/cli.ts smoke-full",
+    "smoke:full": "npm run resilience:smoke:full"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.65.0",

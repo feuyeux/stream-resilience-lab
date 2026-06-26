@@ -20,12 +20,19 @@ This repository is a TypeScript/Node.js lab for testing SDK client resilience ag
 - `npm run resilience-runner -- openai-chat "hello" midstream-close 3000`: run one client scenario.
 - `npm run resilience:scenarios`: list available failure scenarios.
 - `npm run desktop`: start the Electron/Vite/React desktop debugger.
-- `npm run desktop:dist`: build a cross-platform distributable (NSIS on Windows, DMG on macOS, AppImage/deb on Linux). Output lands in `dist/packages/`.
-- `npm run resilience:smoke`: run the protocol/scenario smoke matrix and print trace events.
+- `npm run desktop:dist`: build a platform-specific distributable for the current platform. Output lands in `dist/packages/`.
+- `npm run desktop:dist:all`: build cross-platform distributables (Windows NSIS, macOS DMG, Linux AppImage/deb).
+- `npm run desktop:dist:win`: build Windows NSIS installer only.
+- `npm run desktop:dist:mac`: build macOS DMG only.
+- `npm run desktop:dist:linux`: build Linux AppImage and deb packages only.
+- `npm run resilience:smoke`: run the stable 45-case quick smoke matrix and print trace events.
+- `npm run resilience:smoke:full`: run the full 60-case matrix (20 scenarios × 3 protocols).
 - `npm test`: run all Vitest tests.
 - `npm run typecheck`: run TypeScript type checking without emitting files.
 
-Compatibility aliases exist: `server`, `client`, `scenarios`, and `smoke`.
+Compatibility aliases exist: `server`, `client`, `scenarios`, `smoke`, and `smoke:full`.
+
+**Note**: Cross-platform building from Windows has limitations. See `docs/cross-platform-build.md` for details.
 
 ## Coding Style & Naming Conventions
 
@@ -38,8 +45,9 @@ Keep protocol-specific code in adapters or SDK runners. Keep cross-cutting behav
 Keep scenario and use-case identifiers stable:
 
 - Scenario IDs `S01`-`S20` are documentation handles for the ordered catalog in `src/shared/scenarios.ts`.
-- Smoke use-case IDs `UC001`-`UC045` are generated from `src/client/cli.ts` `smokeCases` order.
+- Quick smoke use-case IDs `UC001`-`UC045` are generated from `src/client/cli.ts` `smokeCases` order.
 - `UC001`-`UC015` are `openai-chat`, `UC016`-`UC030` are `openai-responses`, and `UC031`-`UC045` are `anthropic`.
+- Full smoke use-case IDs `FUC001`-`FUC060` are generated from `src/client/cli.ts` `fullSmokeCases` order: 20 scenarios for each protocol.
 - Trace events and final `RunOutcome` values should preserve `useCaseId` / `use_case_id` when a smoke run or explicit `--use-case-id` provides it.
 
 When adding, removing, or reordering a scenario, update all of these together:
@@ -48,7 +56,7 @@ When adding, removing, or reordering a scenario, update all of these together:
 2. `src/shared/scenarios.ts`
 3. `src/server/scenarioEngine.ts`
 4. `src/client/resilience/policy.ts` and `classify.ts` / `normalizeError.ts` if client behavior changes
-5. `src/client/cli.ts` smoke matrix if it belongs in smoke
+5. `src/client/cli.ts` quick/full smoke matrices if smoke coverage changes
 6. `tests/**/*`
 7. `README.md`
 8. `docs/streaming-resilience.zh-CN.md`
@@ -83,7 +91,7 @@ npm test
 npm run typecheck
 ```
 
-For behavior changes involving streaming failures, also run `npm run resilience:smoke`.
+For behavior changes involving streaming failures, also run `npm run resilience:smoke`. If scenario coverage or use-case mapping changes, also run `npm run resilience:smoke:full`.
 
 For documentation-only changes that touch diagrams or scenario/use-case mappings, also run:
 

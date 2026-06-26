@@ -65,7 +65,12 @@ export interface ScenarioDefinition {
   protocols: Protocol[];
   streamOnly: boolean;
   description: string;
-  expectedProblem: ProblemKind;
+  /** Problem injected at the agent-inference boundary before mitigation. */
+  injectedProblem: ProblemKind;
+  /** Final problem reported by RunOutcome after client mitigation. */
+  expectedFinalProblem: ProblemKind;
+  /** Final status reported by RunOutcome after client mitigation. */
+  expectedStatus: RunStatus;
 }
 
 export interface RunOptions {
@@ -82,6 +87,7 @@ export interface RunOptions {
   fallbackModel?: string;
   priority?: "foreground" | "background";
   maxStreamEvents?: number;
+  consumerDropAfterEvents?: number;
   sessionId?: string;
   currentTurn?: number;
   maxTurns?: number;

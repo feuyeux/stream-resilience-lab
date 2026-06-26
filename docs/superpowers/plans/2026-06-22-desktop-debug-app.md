@@ -1,5 +1,8 @@
 # Desktop Debug App Implementation Plan
 
+> **Current canonical docs:** scenario/use-case semantics now live in `docs/streaming-resilience.zh-CN.md`; use `injectedProblem`, `expectedFinalProblem`, and `expectedStatus` instead of the older single `injectedProblem` field.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build an Electron desktop debugger that shows correlated server and client behavior on a two-lane trace timeline, while removing generated report files from the workflow.

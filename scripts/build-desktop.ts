@@ -62,6 +62,30 @@ export function buildDesktop(): void {
   const buildVersion = process.env.SRL_BUILD_VERSION ?? formatDesktopBuildVersion();
   console.log(`Desktop build version: ${buildVersion}`);
 
+  // Parse command-line arguments for platform selection
+  const args = process.argv.slice(2);
+  const platforms: string[] = [];
+  
+  if (args.includes("--all")) {
+    platforms.push("win", "mac", "linux");
+  } else {
+    if (args.includes("--win") || args.includes("--windows")) platforms.push("win");
+    if (args.includes("--mac") || args.includes("--macos")) platforms.push("mac");
+    if (args.includes("--linux")) platforms.push("linux");
+  }
+
+  // Default to current platform if no platform specified
+  if (platforms.length === 0) {
+    const platform = process.platform;
+    if (platform === "win32") {
+      platforms.push("win");
+    } else if (platform === "darwin") {
+      platforms.push("mac");
+    } else {
+      platforms.push("linux");
+    }
+  }
+
   console.log("Building desktop renderer...");
   execSync("npm run desktop:build", {
     cwd: projectRoot,
@@ -120,24 +144,22 @@ export function buildDesktop(): void {
   }
 
   console.log("Running electron-builder...");
-  const platform = process.platform;
-  const arch = process.arch;
-  let platformFlag: string;
-
-  if (platform === "win32") {
-    platformFlag = "win";
-  } else if (platform === "darwin") {
-    platformFlag = "mac";
-  } else {
-    platformFlag = "linux";
-  }
-
   const configPath = writeGeneratedBuilderConfig(buildVersion);
-  console.log(`Building for ${platform}-${arch}...`);
-  execSync(`npx electron-builder --${platformFlag} --${arch} --config "${configPath}"`, {
-    cwd: projectRoot,
-    stdio: "inherit"
-  });
+  
+  for (const platformFlag of platforms) {
+    console.log(`Building for ${platformFlag}-x64...`);
+    try {
+      execSync(`npx electron-builder --${platformFlag} --x64 --config "${configPath}"`, {
+        cwd: projectRoot,
+        stdio: "inherit"
+      });
+    } catch (error) {
+      console.error(`Failed to build for ${platformFlag}:`, error);
+      if (platformFlag === "mac" && process.platform === "win32") {
+        console.warn("Note: Building macOS DMG from Windows may require additional setup or may not be fully supported.");
+      }
+    }
+  }
 
   console.log("Build complete! Check dist/packages/ for the distributable.");
 }

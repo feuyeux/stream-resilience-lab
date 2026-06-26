@@ -50,7 +50,23 @@ describe("scenario catalog", () => {
       protocols: ["openai-chat", "openai-responses", "anthropic"],
       streamOnly: false,
       description: "valid response or valid stream",
-      expectedProblem: "none"
+      injectedProblem: "none",
+      expectedFinalProblem: "none",
+      expectedStatus: "completed"
+    });
+  });
+
+  it("declares both injected and final expected outcomes for every scenario", () => {
+    for (const scenario of listScenarios()) {
+      expect(scenario.injectedProblem).toBeDefined();
+      expect(scenario.expectedFinalProblem).toBeDefined();
+      expect(scenario.expectedStatus).toBeDefined();
+    }
+
+    expect(resolveScenario("fallback-recovery")).toMatchObject({
+      injectedProblem: "overloaded",
+      expectedFinalProblem: "none",
+      expectedStatus: "recovered"
     });
   });
 });

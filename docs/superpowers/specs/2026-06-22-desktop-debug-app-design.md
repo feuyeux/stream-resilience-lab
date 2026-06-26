@@ -1,5 +1,8 @@
 # Desktop Debug App Design
 
+> **Current canonical docs:** scenario/use-case semantics now live in `docs/streaming-resilience.zh-CN.md`; use `injectedProblem`, `expectedFinalProblem`, and `expectedStatus` instead of the older single `injectedProblem` field.
+
+
 Date: 2026-06-22
 
 ## Purpose

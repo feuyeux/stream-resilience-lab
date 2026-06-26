@@ -646,6 +646,36 @@ describe("resilience policy", () => {
     expect(outcome.mitigation.actions).toContain("cancelled_bounded_queue_overflow");
   });
 
+  it("fails safely without returning partial text when the SDK aborts on stream budget", async () => {
+    const outcome = await runWithResilience(
+      {
+        protocol: "openai-chat",
+        query: "hello",
+        mode: "stream",
+        scenario: "bounded-queue-overflow",
+        maxStreamEvents: 100,
+        model: "mock-model",
+        baseUrl: "http://mock/v1",
+        maxAttempts: 1,
+        idleTimeoutMs: 500,
+        wallTimeoutMs: 2000,
+      },
+      async () => {
+        const error = new Error("bounded stream queue overflow") as Error & { partialText: string; streamEventLimitExceeded: boolean };
+        error.partialText = "partial should be suppressed";
+        error.streamEventLimitExceeded = true;
+        throw error;
+      },
+      { sleep: async () => undefined, random: () => 0.5 }
+    );
+
+    expect(outcome.problem.kind).toBe("stream_backpressure");
+    expect(outcome.output_text).toBeUndefined();
+    expect(outcome.problem.after_partial_output).toBe(false);
+    expect(outcome.result.status).toBe("safe_failure");
+    expect(outcome.mitigation.actions).toContain("cancelled_bounded_queue_overflow");
+  });
+
   it("cancels cleanly when the consumer drops the stream", async () => {
     const outcome = await runWithResilience(
       {

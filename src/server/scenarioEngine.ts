@@ -307,7 +307,7 @@ export async function sendStream(protocol: Protocol, reply: FastifyReply, model:
       traceSseEvent(traceContext, event.event);
     }
 
-    if ((scenario === "midstream-close" || scenario === "consumer-drop") && index === 1) {
+    if (scenario === "midstream-close" && index === 1) {
       traceServer(traceContext, "server.socket_destroyed", `reason=${scenario}`, { reason: scenario });
       destroySse(reply);
       return;

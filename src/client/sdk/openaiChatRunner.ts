@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import type { SdkRunInput, SdkRunResult } from "./types.js";
-import { emitStreamObservation } from "./streamObservation.js";
+import { attachPartialState, emitStreamObservation, enforceClientStreamControls } from "./streamObservation.js";
 
 export async function runOpenAIChat(input: SdkRunInput): Promise<SdkRunResult> {
   const client = new OpenAI({ apiKey: "mock-key", baseURL: input.baseUrl, maxRetries: 0 });
@@ -56,6 +56,7 @@ export async function runOpenAIChat(input: SdkRunInput): Promise<SdkRunResult> {
       }
 
       emitStreamObservation(input, chunk.object, chunkIndex, textDeltaLength, text.length, toolJson);
+      enforceClientStreamControls(input, chunkIndex, text, events, toolJson);
     }
   } catch (error) {
     attachPartialState(error, text, events, toolJson);
@@ -78,12 +79,3 @@ function buildMetadata(input: SdkRunInput): Record<string, string> {
   };
 }
 
-function attachPartialState(error: unknown, text: string, events: string[], toolJson: string): void {
-  if (typeof error === "object" && error !== null) {
-    Object.assign(error, {
-      partialText: text,
-      partialEvents: events,
-      partialToolJson: toolJson || undefined
-    });
-  }
-}

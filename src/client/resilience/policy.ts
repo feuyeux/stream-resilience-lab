@@ -447,6 +447,21 @@ function reportUnsafeFailure(
     circuitOpened: boolean;
   }
 ): RunOutcome | undefined {
+  if (isStreamEventLimitExceeded(error)) {
+    input.actions.push("cancelled_bounded_queue_overflow");
+    return makeOutcome(startedAt, started, {
+      kind: "stream_backpressure",
+      message: input.lastMessage ?? "bounded stream queue overflow",
+      text: "",
+      actions: input.actions,
+      retryAttempts: input.retryAttempts,
+      fallbackUsed: input.fallbackUsed,
+      circuitOpened: input.circuitOpened,
+      status: "safe_failure",
+      safeToRetry: false
+    });
+  }
+
   if (input.partialToolJson && !isCompleteJsonObject(input.partialToolJson)) {
     input.actions.push("blocked_incomplete_tool_json");
     return makeOutcome(startedAt, started, {
@@ -666,6 +681,11 @@ function timeoutKindFrom(value: unknown): TimeoutKind | undefined {
 
 function isBackgroundOverload(options: RunOptions, problem: ProblemKind): boolean {
   return problem === "overloaded" && (options.priority === "background" || options.scenario === "background-overloaded");
+}
+
+function isStreamEventLimitExceeded(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  return (error as { streamEventLimitExceeded?: unknown }).streamEventLimitExceeded === true;
 }
 
 function extractPartialState(error: unknown): { text: string; toolJson?: string } {
